@@ -1,0 +1,218 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Lesson 0001 — What is DevOps?</title>
+<link rel="stylesheet" href="../assets/style.css">
+</head>
+<body>
+
+<h1>Lesson 0001：到底什么是 DevOps？</h1>
+
+<p>这是你 DevOps 学习之旅的第一课。学完这一课，你就能回答面试中最常见的问题：<strong>「什么是 DevOps？」</strong></p>
+
+<h2>先讲一个故事</h2>
+
+<p>假设你是一个前端开发者。你写了一个很棒的 React 应用，在本地 <code>localhost:3000</code> 跑得完美。现在你把它推给「运维」去上线。</p>
+
+<p>运维说：「你用的 Node 版本是多少？环境变量有哪些？数据库连哪？nginx 配置谁写？这个端口跟现有服务冲突了…」</p>
+
+<p>三天过去了，你的代码还躺在 Git 仓库里，没上线。</p>
+
+<p>这就是经典问题：<strong>开发（Dev）和运维（Ops）之间有一堵墙</strong>。Dev 只管写代码，Ops 只管跑服务。双方用不同的语言、不同的工具、不同的优先级。代码在 Dev 的机器上能跑，但在 Ops 的服务器上跑不了——「在我机器上没问题」成了行业梗。</p>
+
+<h2>DevOps = 拆掉这堵墙</h2>
+
+<p>DevOps 的核心主张就一句话：</p>
+
+<blockquote>
+<p>让写代码的人（Dev）和跑代码的人（Ops）用同一套工具、同一种语言、同一条流水线协作，从而<strong>更快、更可靠地交付软件</strong>。</p>
+</blockquote>
+
+<p>它不是一个职位，不是一组工具，而是一种<strong>文化和方法论</strong>。工具是实现这种文化的载体。</p>
+
+<h2>DevOps 的无限循环：Plan → Code → Build → Test → Release → Deploy → Operate → Monitor → Plan</h2>
+
+<p>DevOps 通常用一个「无限循环」（infinity loop）来表示软件从想法到上线、再到反馈的完整生命周期：</p>
+
+<pre><code>   Plan ──→ Code ──→ Build ──→ Test
+    ↑                            ↓
+ Monitor                      Release
+    ↑                            ↓
+ Operate ←── Deploy ←───────────┘
+</code></pre>
+
+<p>每个阶段解释一下（你现在不用深究，后面每课深入一个）：</p>
+
+<table>
+  <tr><th>阶段</th><th>做什么</th><th>你认识的工具</th></tr>
+  <tr><td>Plan（规划）</td><td>需求拆分、任务管理</td><td>Jira, GitHub Issues</td></tr>
+  <tr><td>Code（编码）</td><td>写代码、代码审查</td><td>VS Code, Git, GitHub</td></tr>
+  <tr><td>Build（构建）</td><td>编译、打包</td><td>npm build, webpack, Docker</td></tr>
+  <tr><td>Test（测试）</td><td>自动化测试</td><td>Jest, Playwright, CI 流水线</td></tr>
+  <tr><td>Release（发布）</td><td>版本管理、发布准备</td><td>Git tags, GitHub Releases</td></tr>
+  <tr><td>Deploy（部署）</td><td>把代码推到服务器</td><td>Docker, Kubernetes, 云服务</td></tr>
+  <tr><td>Operate（运维）</td><td>保持服务运行</td><td>Linux, systemd, 负载均衡</td></tr>
+  <tr><td>Monitor（监控）</td><td>观测系统状态</td><td>Prometheus, Grafana, 告警</td></tr>
+</table>
+
+<p>注意：这 8 个阶段大多数已经在你的日常工作中出现了！你作为前端/后端开发者，已经在做 Plan → Code → Build → Test。DevOps 只是把这个循环延伸到右边的部分。</p>
+
+<h2>DevOps 的四大支柱</h2>
+
+<p>把 DevOps 拆成四个可以独立学习的领域：</p>
+
+<ol>
+  <li><strong>CI/CD（持续集成 / 持续交付）</strong> — 代码提交后自动构建、测试、部署。你 push 代码，剩下的交给机器。</li>
+  <li><strong>IaC（基础设施即代码）</strong> — 用代码定义服务器、网络、数据库，而不是手动点鼠标。服务器配置可以版本控制、review、回滚。</li>
+  <li><strong>容器化 & 编排</strong> — Docker 把你的应用和环境打包成一个「集装箱」；Kubernetes 管理成百上千个这样的集装箱。</li>
+  <li><strong>监控 & 可观测性</strong> — 线上出了问题，你能在用户发现之前知道。日志、指标、追踪。</li>
+</ol>
+
+<h2>DevOps Engineer 到底做什么？</h2>
+
+<p>DevOps 不是一个「纯运维」岗位。一个 DevOps Engineer 的工作大致包括：</p>
+
+<ul>
+  <li>搭建和维护 CI/CD 流水线（开发 push 代码 → 自动跑到线上）</li>
+  <li>管理云基础设施（AWS/阿里云上的服务器、网络、存储）</li>
+  <li>写自动化脚本（Shell, Python）减少手动操作</li>
+  <li>配置监控和告警（出问题了第一时间知道）</li>
+  <li>帮助开发团队提升交付效率（你的开发背景在这里是巨大优势）</li>
+</ul>
+
+<h2>你已有的优势</h2>
+
+<p>你是前端 + 部分后端开发者。这意味着：</p>
+
+<ul>
+  <li>你<strong>会用 Git</strong> → CI/CD 的本质就是「Git 事件触发自动化脚本」</li>
+  <li>你<strong>会写代码</strong> → IaC 就是写代码来管理服务器，只不过语言从 JS/TS 变成了 HCL (Terraform) 或 YAML</li>
+  <li>你<strong>理解依赖管理</strong>（npm, package.json）→ Docker 镜像就是带着完整依赖树的「超级 package」</li>
+  <li>你<strong>知道测试的重要性</strong> → CI 流水线的核心就是自动跑测试</li>
+</ul>
+
+<div class="tip">
+你不是从零开始。你只是需要把已有的开发思维延伸到运维领域。
+</div>
+
+<h2>练习：画出你的第一张 DevOps 地图</h2>
+
+<p><strong>目标：</strong>用你当前的工作（或一个你熟悉的项目）来映射 DevOps 生命周期。</p>
+
+<p><strong>步骤：</strong></p>
+
+<ol>
+  <li>拿出一张纸（或打开一个空白文档）</li>
+  <li>画出 8 个阶段的循环（Plan → Code → … → Monitor → Plan）</li>
+  <li>在每个阶段下面写下你<strong>目前</strong>在用的工具和方法</li>
+  <li>标记出哪些阶段你现在<strong>不做</strong>或<strong>手动做</strong>——这些就是你要学的东西</li>
+</ol>
+
+<p>举个例子，你的图可能长这样：</p>
+
+<pre><code>Plan:    GitHub Issues  ✓
+Code:    VS Code, Git   ✓
+Build:   npm run build  ✓
+Test:    Jest（手写）   ✓ （但是没有自动跑）
+Release: npm version    ✓ （手动）
+Deploy:  ???            ✗ （不会）
+Operate: ???            ✗ （不会）
+Monitor: ???            ✗ （不会）
+</code></pre>
+
+<p>这张图就是你的<strong>个人 DevOps 学习路线图</strong>。接下来的每一课，都会帮你把其中一个 <code>✗</code> 变成 <code>✓</code>。</p>
+
+<h2>小测验</h2>
+
+<form id="quiz" onsubmit="return checkQuiz(event)">
+  <fieldset style="border:1px solid var(--border); border-radius:6px; padding:1rem; margin:1rem 0;">
+    <legend style="font-weight:600;">问题 1：DevOps 解决的核心问题是什么？（选一个）</legend>
+    <label style="display:block; margin:0.4rem 0;"><input type="radio" name="q1" value="a"> 服务器太贵了</label>
+    <label style="display:block; margin:0.4rem 0;"><input type="radio" name="q1" value="b"> 代码写得不够好</label>
+    <label style="display:block; margin:0.4rem 0;"><input type="radio" name="q1" value="c"> 开发和运维之间的协作壁垒</label>
+    <label style="display:block; margin:0.4rem 0;"><input type="radio" name="q1" value="d"> 数据库查询太慢</label>
+  </fieldset>
+
+  <fieldset style="border:1px solid var(--border); border-radius:6px; padding:1rem; margin:1rem 0;">
+    <legend style="font-weight:600;">问题 2：以下哪个不是 DevOps 生命周期中的阶段？（选一个）</legend>
+    <label style="display:block; margin:0.4rem 0;"><input type="radio" name="q2" value="a"> Plan（规划）</label>
+    <label style="display:block; margin:0.4rem 0;"><input type="radio" name="q2" value="b"> Design（设计）</label>
+    <label style="display:block; margin:0.4rem 0;"><input type="radio" name="q2" value="c"> Deploy（部署）</label>
+    <label style="display:block; margin:0.4rem 0;"><input type="radio" name="q2" value="d"> Monitor（监控）</label>
+  </fieldset>
+
+  <fieldset style="border:1px solid var(--border); border-radius:6px; padding:1rem; margin:1rem 0;">
+    <legend style="font-weight:600;">问题 3：作为前端开发者，你已经有哪个 DevOps 相关技能？（选一个）</legend>
+    <label style="display:block; margin:0.4rem 0;"><input type="radio" name="q3" value="a"> Kubernetes 集群管理</label>
+    <label style="display:block; margin:0.4rem 0;"><input type="radio" name="q3" value="b"> AWS 网络配置</label>
+    <label style="display:block; margin:0.4rem 0;"><input type="radio" name="q3" value="c"> 版本控制（Git）</label>
+    <label style="display:block; margin:0.4rem 0;"><input type="radio" name="q3" value="d"> Terraform 模块编写</label>
+  </fieldset>
+
+  <button type="submit" style="
+    background: var(--accent);
+    color: white;
+    border: none;
+    padding: 0.6rem 1.5rem;
+    font-size: 1rem;
+    border-radius: 6px;
+    cursor: pointer;
+    font-family: inherit;
+  ">检查答案</button>
+</form>
+
+<div id="quiz-result" style="margin-top:1rem;"></div>
+
+<h2>推荐阅读</h2>
+
+<ul>
+  <li><a href="https://roadmap.sh/devops" target="_blank">roadmap.sh/devops</a> — 浏览 DevOps 完整路线图（只看顶层 8 个阶段即可）</li>
+  <li><a href="https://github.com/milanm/DevOps-Roadmap" target="_blank">milanm/DevOps-Roadmap</a> — 这个 GitHub 仓库是社区整理的 DevOps 学习资源合集</li>
+</ul>
+
+<p><strong>主要推荐资源：</strong>找一本《凤凰项目》(The Phoenix Project)，花一个周末读完它。它不是技术书，而是一个关于 DevOps 为什么重要的故事。读完你会对整个领域的「为什么」有深刻的理解。</p>
+
+<h2>下一步</h2>
+
+<p>下一课我们将开始第一个动手环节：<strong>Linux 命令行基础</strong>——因为不管你以后用 Docker、Kubernetes 还是云服务，你最终都是在跟 Linux 打交道。</p>
+
+<div class="note">
+有问题？直接在这个对话里问 —— 我是你的 DevOps 老师，可以帮你解释任何不清楚的概念。
+</div>
+
+<div class="cite">
+Lesson 0001 · What is DevOps? · <a href="../reference/glossary.html">术语表</a> · <a href="../MISSION.md">Mission</a>
+</div>
+
+<script>
+function checkQuiz(e) {
+  e.preventDefault();
+  const answers = { q1: 'c', q2: 'b', q3: 'c' };
+  let correct = 0;
+  let feedback = [];
+  for (const [q, a] of Object.entries(answers)) {
+    const selected = document.querySelector(`input[name="${q}"]:checked`);
+    if (!selected) {
+      feedback.push(q + ': 未作答');
+    } else if (selected.value === a) {
+      correct++;
+      feedback.push(q + ': ✓ 正确');
+    } else {
+      feedback.push(q + ': ✗ 错误（正确答案 ' + a + '）');
+    }
+  }
+  const resultDiv = document.getElementById('quiz-result');
+  const pct = Math.round(correct / 3 * 100);
+  resultDiv.innerHTML = `
+    <div style="background:${pct===100?'var(--success-bg)':'var(--warn-bg)'};color:${pct===100?'var(--success-fg)':'var(--warn-fg)'};padding:0.75rem 1rem;border-radius:6px;">
+      <strong>得分：${correct}/3 (${pct}%)</strong><br>
+      ${feedback.join('<br>')}
+      ${pct === 100 ? '<br>🎉 全对！你已经掌握了 DevOps 的基本概念。' : '<br>再看看上面的内容，然后重试。'}
+    </div>`;
+}
+</script>
+
+</body>
+</html>

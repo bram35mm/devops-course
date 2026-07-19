@@ -1,0 +1,286 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>DevOps 术语表</title>
+<link rel="stylesheet" href="../assets/style.css">
+</head>
+<body>
+
+<h1>DevOps 术语表（Glossary）</h1>
+
+<p>本术语表收录 DevOps 学习过程中遇到的核心概念。每个术语保留英文原文，附中文解释。随课程推进持续更新。</p>
+
+<h2>基础概念</h2>
+
+<dl>
+  <dt>DevOps</dt>
+  <dd>Development + Operations 的合成词。一种文化和实践，旨在打破开发与运维之间的壁垒，通过自动化工具链实现软件的快速、可靠交付。不是一个具体职位。</dd>
+
+  <dt>CI/CD</dt>
+  <dd>Continuous Integration / Continuous Delivery（或 Deployment）的缩写。持续集成：频繁将代码合并到主干并自动测试。持续交付：确保代码始终处于可发布状态。持续部署：每一个通过测试的变更自动部署到生产环境。</dd>
+
+  <dt>Infrastructure as Code (IaC)</dt>
+  <dd>基础设施即代码。用声明式配置文件（如 Terraform 的 HCL、Ansible 的 YAML）来定义和管理服务器、网络、数据库等基础设施，而非手动操作。基础设施可以版本控制、review、自动化。</dd>
+
+  <dt>Pipeline (流水线)</dt>
+  <dd>一组自动执行的步骤序列。从代码提交开始，经过构建、测试、部署等阶段，最终将软件交付到目标环境。CI/CD 流水线是 DevOps 的核心工具。</dd>
+
+  <dt>SRE</dt>
+  <dd>Site Reliability Engineering，站点可靠性工程。Google 提出的理念：用软件工程的方法解决运维问题。SRE 和 DevOps 是互补关系，不是替代关系。</dd>
+
+  <dt>Shift Left</dt>
+  <dd>「左移」。将测试、安全检查等环节尽可能提前到开发周期的早期（流水线的左侧），而非等到部署前才做。越早发现问题，修复成本越低。</dd>
+</dl>
+
+<h2>Linux & 命令行</h2>
+
+<dl>
+  <dt>Shell</dt>
+  <dd>命令行解释器。用户输入命令，Shell 翻译给操作系统执行。最常见的 Shell 是 Bash（Bourne Again Shell）。</dd>
+
+  <dt>stdin / stdout / stderr</dt>
+  <dd>标准输入（文件描述符 0）、标准输出（1）、标准错误（2）。每个进程都有这三个数据流。管道 <code>|</code> 连接 stdout 到 stdin，<code>2>/dev/null</code> 丢弃 stderr。</dd>
+
+  <dt>Pipe (管道)</dt>
+  <dd><code>|</code> 符号。将左边命令的标准输出（stdout）连接到右边命令的标准输入（stdin），实现命令串联。</dd>
+
+  <dt>systemd</dt>
+  <dd>现代 Linux 的初始化系统和服务管理器。PID 1。通过 <code>systemctl</code> 管理后台服务（启动、停止、重启、开机自启）。</dd>
+
+  <dt>SSH (Secure Shell)</dt>
+  <dd>加密的远程登录协议。DevOps 日常：<code>ssh user@host</code> 进入服务器，<code>scp</code> 传文件。所有远程操作的基础。</dd>
+
+  <dt>Package Manager (包管理器)</dt>
+  <dd>管理软件安装、升级、卸载的工具。Debian/Ubuntu 用 <code>apt</code>，RHEL/CentOS 用 <code>yum/dnf</code>，macOS 用 <code>brew</code>。</dd>
+
+  <dt>/dev/null</dt>
+  <dd>Linux 的「黑洞」——写入的数据被丢弃，读取立即返回 EOF。常用于丢弃不需要的输出。</dd>
+</dl>
+
+<h2>Shell 脚本编程</h2>
+
+<dl>
+  <dt>Shebang (#!)</dt>
+  <dd>脚本第一行的 <code>#!/bin/bash</code>。告诉操作系统用哪个解释器执行脚本。必须写在第一行。</dd>
+
+  <dt>Exit Code (退出码)</dt>
+  <dd>每个命令/脚本结束时返回的整数。0 = 成功，非 0 = 失败。<code>$?</code> 变量获取上一条命令的退出码。<code>exit 0</code> 正常退出，<code>exit 1</code> 报错退出。</dd>
+
+  <dt>set -e</dt>
+  <dd>Bash 选项。任何命令返回非 0 退出码时立即终止脚本。DevOps 脚本几乎必用，防止错误被忽略。</dd>
+
+  <dt>set -u</dt>
+  <dd>Bash 选项。使用未定义变量时立即报错退出。防止拼写错误导致静默 bug。</dd>
+
+  <dt>set -o pipefail</dt>
+  <dd>Bash 选项。管道中任何命令失败都导致整个管道失败，而非只看最后一个命令。</dd>
+
+  <dt>Command Substitution (命令替换)</dt>
+  <dd><code>$(command)</code> 语法。将命令的标准输出作为字符串嵌入。如 <code>TODAY=$(date)</code>。旧语法 <code>`command`</code> 不推荐。</dd>
+
+  <dt>Trap</dt>
+  <dd>捕获信号或错误并执行指定命令。如 <code>trap 'echo "Failed at $LINENO"' ERR</code> 在脚本出错时打印行号。</dd>
+</dl>
+
+<h2>容器 & 编排</h2>
+
+<dl>
+  <dt>Container (容器)</dt>
+  <dd>一种轻量级的虚拟化技术。将应用及其所有依赖（运行时、库、配置）打包在一起，确保在任何环境中行为一致。Docker 是最流行的容器工具。</dd>
+
+  <dt>Image (镜像)</dt>
+  <dd>容器的静态模板。包含运行应用所需的完整文件系统。镜像是只读的，容器是镜像的运行实例。</dd>
+
+  <dt>Docker</dt>
+  <dd>最广泛使用的容器平台。提供构建镜像、运行容器、管理镜像仓库的完整工具链。</dd>
+
+  <dt>Kubernetes (K8s)</dt>
+  <dd>容器编排平台。管理成百上千个容器的部署、扩缩容、负载均衡、自愈。K8s 是「K」和「s」之间 8 个字母的缩写。</dd>
+
+  <dt>Pod</dt>
+  <dd>Kubernetes 的最小调度单元，包含一个或多个紧密耦合的容器。</dd>
+
+  <dt>Dockerfile</dt>
+  <dd>定义如何构建 Docker 镜像的文本文件。包含 FROM、COPY、RUN、CMD 等指令。相当于镜像的「食谱」。</dd>
+
+  <dt>Docker Compose</dt>
+  <dd>Docker 官方工具，用 YAML 文件定义和运行多容器应用。一个 <code>docker compose up</code> 启动全部服务。</dd>
+
+  <dt>Docker Layer (层)</dt>
+  <dd>Dockerfile 中每条指令（RUN、COPY 等）生成一个只读层。Docker 按层缓存：未变的层直接复用，加速构建。COPY package*.json 放在 COPY . . 前面就是为了利用层缓存。</dd>
+
+  <dt>Multi-stage Build (多阶段构建)</dt>
+  <dd>一个 Dockerfile 包含多个 FROM 指令。第一阶段编译/构建，第二阶段只复制产物。最终镜像不包含构建工具，体积大幅减小。</dd>
+
+  <dt>Volume (卷)</dt>
+  <dd>Docker 的数据持久化机制。容器的文件系统是临时的（容器删除数据丢失），Volume 将数据存在宿主机上，跨容器生命周期保留。数据库数据必须用 Volume。</dd>
+
+  <dt>Docker Registry (镜像仓库)</dt>
+  <dd>存储和分发 Docker 镜像的服务。Docker Hub 是默认公共仓库（类似 npm registry）。<code>docker push/pull</code> 与之交互。</dd>
+
+  <dt>Alpine Linux</dt>
+  <dd>一个超轻量 Linux 发行版（~5MB）。Docker 官方镜像大多提供 Alpine 版本（如 <code>node:22-alpine</code>），是生产环境首选基础镜像。</dd>
+</dl>
+
+<h2>CI/CD</h2>
+
+<dl>
+  <dt>GitHub Actions</dt>
+  <dd>GitHub 内建的 CI/CD 平台。通过 YAML 文件定义自动化工作流，免费额度慷慨（公开仓库无限用）。触发条件包括 push、PR、定时、手动。</dd>
+
+  <dt>Workflow (工作流)</dt>
+  <dd>GitHub Actions 的顶层单元。一个 YAML 文件 = 一个 Workflow。定义触发条件（on）、要跑的任务（jobs）及其执行环境。</dd>
+
+  <dt>Job (任务)</dt>
+  <dd>Workflow 中的独立执行单元。多个 Job 默认并行运行，可用 <code>needs</code> 指定依赖顺序。</dd>
+
+  <dt>Runner (执行器)</dt>
+  <dd>执行 Workflow 的虚拟机。GitHub 免费提供 ubuntu-latest、macos-latest、windows-latest。也可自建 runner。</dd>
+
+  <dt>GitHub Secrets</dt>
+  <dd>仓库级别的加密变量。存储敏感信息（密码、Token、SSH Key），Workflow 中用 <code>${{ secrets.NAME }}</code> 读取，日志中自动屏蔽。</dd>
+
+  <dt>Matrix Build (矩阵构建)</dt>
+  <dd>同一个 Job 在多个参数组合上并行运行。如同时在 Node 18/20/22 和 Ubuntu/macOS 上跑测试，确保跨平台兼容性。</dd>
+
+  <dt>Artifact (制品)</dt>
+  <dd>Workflow 运行产生的文件（构建产物、测试报告、覆盖率数据）。可在 Job 之间传递或下载保存。</dd>
+</dl>
+
+<h2>部署 & 网络</h2>
+
+<dl>
+  <dt>Reverse Proxy (反向代理)</dt>
+  <dd>位于客户端和后端服务器之间的中间层。接收客户端请求，转发给后端，返回响应。Nginx 是最常用的反向代理。作用：SSL 终止、负载均衡、静态文件服务、安全隔离。</dd>
+
+  <dt>Nginx</dt>
+  <dd>高性能 HTTP 服务器和反向代理。DevOps 标配：站在应用前面处理 HTTPS、静态文件、请求转发。配置文件在 <code>/etc/nginx/sites-available/</code>。</dd>
+
+  <dt>Let's Encrypt</dt>
+  <dd>免费、自动化的 SSL/TLS 证书颁发机构。通过 Certbot 工具自动获取和续期 HTTPS 证书，90 天有效期，自动续期。</dd>
+
+  <dt>rsync</dt>
+  <dd>远程文件同步工具。只传输变化的文件，比 scp 全量复制更高效。常用于部署：<code>rsync -avz ./ user@server:/opt/app/</code>。</dd>
+
+  <dt>Zero-downtime Deployment (零停机部署)</dt>
+  <dd>部署新版本时不中断服务。常用策略：蓝绿部署（两套环境切换）、滚动更新（逐个替换实例）、金丝雀发布（先给小部分流量）。</dd>
+</dl>
+
+<h2>Infrastructure as Code</h2>
+
+<dl>
+  <dt>Provider (Terraform)</dt>
+  <dd>Terraform 的「驱动」。通过 Provider 与具体平台（AWS、Docker、GCP 等）的 API 交互。每个 Provider 定义了一套可用的 Resource 类型。</dd>
+
+  <dt>Resource (Terraform)</dt>
+  <dd>Terraform 管理的基本单元——服务器实例、安全组、DNS 记录、Docker 容器等。在 .tf 文件中用 <code>resource "type" "name" { ... }</code> 定义。</dd>
+
+  <dt>State (tfstate)</dt>
+  <dd>Terraform 的核心文件，记录「上次 apply 后基础设施的实际状态」。用于计算 plan diff。包含敏感信息，不能提交 Git。团队协作用 Remote State（S3、Terraform Cloud）。</dd>
+
+  <dt>HCL (HashiCorp Configuration Language)</dt>
+  <dd>Terraform 的配置语言。声明式语法，类似 JSON 但更人性化。支持变量、函数、模块、条件表达式。</dd>
+
+  <dt>Module (Terraform)</dt>
+  <dd>一组可复用的 Terraform 资源配置，相当于「函数」。封装常见模式（如「一个 VPC + 子网 + 安全组」），通过输入变量参数化。</dd>
+</dl>
+
+<h2>监控 & 告警</h2>
+
+<dl>
+  <dt>PromQL</dt>
+  <dd>Prometheus Query Language。Prometheus 的查询语言，用于检索和聚合时间序列数据。核心函数：<code>rate()</code>、<code>avg()</code>、<code>sum()</code>、<code>increase()</code>。</dd>
+
+  <dt>Node Exporter</dt>
+  <dd>Prometheus 生态的「探针」。装在每台服务器上，暴露 CPU、内存、磁盘、网络等系统指标的 <code>/metrics</code> 端点。</dd>
+
+  <dt>Alertmanager</dt>
+  <dd>Prometheus 的告警管理组件。接收 Prometheus 发出的告警，进行去重、分组、静默、路由，推送到 Slack/钉钉/邮件/PagerDuty。</dd>
+
+  <dt>RED Method</dt>
+  <dd>服务监控方法论。对每个服务关注三个指标：Rate（每秒请求数）、Errors（错误率）、Duration（响应延迟）。面试常考题。</dd>
+
+  <dt>USE Method</dt>
+  <dd>系统监控方法论。对每个资源关注：Utilization（利用率）、Saturation（饱和度）、Errors（错误数）。与 RED 互补，RED 看服务，USE 看资源。</dd>
+
+  <dt>Scrape (抓取)</dt>
+  <dd>Prometheus 的数据采集方式。Prometheus 定期 HTTP GET 目标的 <code>/metrics</code> 端点，拉取指标数据存入时间序列数据库。与「推送」模式相对。</dd>
+</dl>
+
+<h2>云 & 基础设施</h2>
+
+<dl>
+  <dt>Cloud Provider (云服务商)</dt>
+  <dd>提供按需计算、存储、网络资源的公司。三大公有云：AWS、Azure、Google Cloud。国内：阿里云、腾讯云、华为云。</dd>
+
+  <dt>Terraform</dt>
+  <dd>HashiCorp 出品的基础设施即代码工具。用 HCL 语言声明式地定义云资源，执行 <code>terraform apply</code> 即可创建/更新实际基础设施。</dd>
+
+  <dt>Ansible</dt>
+  <dd>Red Hat 出品的配置管理工具。用 YAML 定义服务器配置，通过 SSH 执行，无需在被管理节点上安装 agent。</dd>
+
+  <dt>Load Balancer (负载均衡器)</dt>
+  <dd>将进入的流量分发到多个后端服务器，提高可用性和吞吐量。</dd>
+</dl>
+
+<h2>监控 & 可观测性</h2>
+
+<dl>
+  <dt>Observability (可观测性)</dt>
+  <dd>通过系统的外部输出（日志、指标、追踪）来理解系统内部状态的能力。比「监控」更全面。</dd>
+
+  <dt>Metrics (指标)</dt>
+  <dd>可量化的测量值，如 CPU 使用率、请求延迟、错误率。Prometheus 是最流行的指标收集系统。</dd>
+
+  <dt>Logging (日志)</dt>
+  <dd>系统和应用产生的事件记录。ELK Stack (Elasticsearch, Logstash, Kibana) 是最常见的日志方案。</dd>
+
+  <dt>Prometheus</dt>
+  <dd>CNCF 孵化的开源监控和告警系统。按时间序列收集指标，配合 Grafana 做可视化。</dd>
+
+  <dt>Grafana</dt>
+  <dd>开源的数据可视化和仪表盘平台。通常与 Prometheus 配合使用。</dd>
+</dl>
+
+<h2>版本控制 & 协作</h2>
+
+<dl>
+  <dt>Git</dt>
+  <dd>分布式版本控制系统。DevOps 工具链的基础——几乎所有自动化流程都由 Git 事件触发。</dd>
+
+  <dt>SCM (Source Control Management)</dt>
+  <dd>源代码管理。在 DevOps 语境中通常泛指 Git + GitHub/GitLab 等平台。</dd>
+
+  <dt>GitOps</dt>
+  <dd>一种操作模式：将 Git 作为声明式基础设施和应用的「单一事实来源」。Git 仓库中的变更自动同步到实际系统。</dd>
+
+  <dt>Rebase</dt>
+  <dd>变基。将一系列 commit「搬到」另一个 commit 之后，重写提交历史为线性。与 merge 不同，rebase 不产生 merge commit。黄金法则：不要 rebase 已经 push 到共享分支的 commit。</dd>
+
+  <dt>Cherry-pick</dt>
+  <dd>摘樱桃。将某一个 commit 的改动复制到当前分支，不合并整个分支。常用于将 hotfix 中的单个修复移植到 release 分支。</dd>
+
+  <dt>Stash</dt>
+  <dd>暂存。将工作区未提交的改动临时保存，恢复干净工作区。用 <code>git stash pop</code> 恢复。</dd>
+
+  <dt>Bisect</dt>
+  <dd>二分查找。自动通过二分法定位引入 bug 的 commit。每步标记 good/bad，Git 自动缩小范围。</dd>
+
+  <dt>Reflog</dt>
+  <dd>引用日志。记录 HEAD 和分支引用的所有移动历史。即使 commit 被 reset 删除，reflog 仍能找到。默认保留 90 天。</dd>
+
+  <dt>Git Hook</dt>
+  <dd>Git 钩子。在特定 Git 事件（commit、push、receive）触发时自动执行的脚本。pre-commit、pre-push 用于本地检查，post-receive 用于触发 CI/CD。</dd>
+
+  <dt>Conventional Commits</dt>
+  <dd>约定式提交。一种 commit message 规范：<code>type(scope): description</code>（如 <code>feat(auth): add login</code>）。有利于自动化生成 changelog 和版本号。</dd>
+</dl>
+
+<div class="cite">
+<a href="../lessons/0001-what-is-devops.html">← Lesson 0001</a> · 术语会随课程持续更新
+</div>
+
+</body>
+</html>

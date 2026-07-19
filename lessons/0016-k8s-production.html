@@ -1,0 +1,198 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Lesson 0016 — K8s 生产实践</title>
+<link rel="stylesheet" href="../assets/style.css">
+</head>
+<body>
+
+<h1>Lesson 0016：K8s 生产实践——Helm、HPA、RBAC、监控</h1>
+
+<p><a href="./0015-k8s-networking-config.html">← Lesson 0015</a> 讲了 Ingress、ConfigMap、Volume。最后一课把 K8s 技能提升到<strong>生产可用</strong>的水平。</p>
+
+<h2>1. Helm——K8s 的包管理器</h2>
+
+<p>没有 Helm：每次部署要 <code>kubectl apply</code> 一堆 YAML 文件，环境不同值不同。</p>
+<p>有了 Helm：一个 Chart 包好所有资源，<code>values.yaml</code> 区分环境。</p>
+
+<pre><code># 安装 Helm
+curl https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | bash
+
+# 搜索和安装现成的 Chart
+helm repo add bitnami https://charts.bitnami.com/bitnami
+helm search repo bitnami/nginx
+helm install my-nginx bitnami/nginx --set service.type=NodePort
+
+# 创建自己的 Chart
+helm create my-app
+# 目录结构：
+# my-app/
+#   Chart.yaml          # Chart 元信息（名字、版本）
+#   values.yaml         # 默认配置值
+#   templates/          # K8s YAML 模板（带 {{ .Values.xxx }} 变量）
+#     deployment.yaml
+#     service.yaml
+#     ingress.yaml
+
+# 不同环境用不同的 values 文件
+helm install my-app-staging ./my-app -f values-staging.yaml
+helm install my-app-prod ./my-app -f values-prod.yaml
+
+# 升级/回滚
+helm upgrade my-app-staging ./my-app -f values-staging.yaml
+helm rollback my-app-staging 1</code></pre>
+
+<h2>2. HPA——自动扩缩容</h2>
+
+<p>HPA (Horizontal Pod Autoscaler) 根据 CPU/内存/自定义指标自动增减 Pod 数量。</p>
+
+<pre><code># hpa.yaml
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: web-hpa
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: web-deploy
+  minReplicas: 2
+  maxReplicas: 10
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: 70     # 平均 CPU 70% 时扩容
+
+# 前提：Deployment 里必须设了 resources.requests
+kubectl apply -f hpa.yaml
+kubectl get hpa
+# NAME      REFERENCE          TARGETS   MIN   MAX   REPLICAS
+# web-hpa   Deployment/web-deploy   45%/70%   2     10     3</code></pre>
+
+<div class="note">
+HPA 只能对无状态应用自动扩缩。数据库等有状态应用用 VPA (Vertical Pod Autoscaler) 或手动调整。
+</div>
+
+<h2>3. RBAC——权限控制</h2>
+
+<p>不是所有人都应该有集群管理员权限。RBAC 控制谁（Subject）能对什么（Resource）做什么（Verb）。</p>
+
+<pre><code># rbac.yaml —— 给 CI/CD pipeline 只读权限
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: deployer
+  namespace: production
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  namespace: production
+  name: pod-reader
+rules:
+  - apiGroups: [""]
+    resources: ["pods", "pods/log"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["apps"]
+    resources: ["deployments"]
+    verbs: ["get", "list", "update", "patch"]   # 可以更新 Deployment
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  namespace: production
+  name: deployer-pod-reader
+subjects:
+  - kind: ServiceAccount
+    name: deployer
+    namespace: production
+roleRef:
+  kind: Role
+  name: pod-reader
+  apiGroup: rbac.authorization.k8s.io</code></pre>
+
+<p>权限三要素：</p>
+<ul>
+  <li><strong>Subject</strong>：谁？（User / ServiceAccount）</li>
+  <li><strong>Resource</strong>：对什么？（pods, deployments, secrets…）</li>
+  <li><strong>Verb</strong>：做什么？（get, list, create, update, delete, watch）</li>
+</ul>
+
+<h2>4. K8s 监控集成</h2>
+
+<p>Lesson 0009 的 Prometheus + Grafana 可以直接接入 K8s：</p>
+
+<pre><code># 用 Helm 一键装 Prometheus Stack（含 Grafana）
+helm repo add prometheus-community https://prometheus-community.github.io/helm-charts
+helm install monitoring prometheus-community/kube-prometheus-stack \
+  --namespace monitoring --create-namespace
+
+# 自动发现并监控：
+# - 所有 Node 的系统指标
+# - 所有 Pod 的 CPU/内存
+# - K8s 组件（API Server、etcd、scheduler）
+# - 你的应用（加 ServiceMonitor CRD）
+
+# 访问 Grafana
+kubectl port-forward -n monitoring svc/monitoring-grafana 3000:80
+# 默认密码：admin / prom-operator</code></pre>
+
+<h2>5. K8s 安全清单</h2>
+
+<table>
+  <tr><th>措施</th><th>为什么</th></tr>
+  <tr><td>不用 root 跑容器</td><td>减少攻击面。<code>securityContext.runAsNonRoot: true</code></td></tr>
+  <tr><td>镜像扫描</td><td>Trivy / Clair 扫已知漏洞</td></tr>
+  <tr><td>NetworkPolicy</td><td>限制 Pod 之间能访问什么（最小权限）</td></tr>
+  <tr><td>PodSecurityStandards</td><td>禁止 privileged 容器、hostNetwork 等危险配置</td></tr>
+  <tr><td>Secret 加密</td><td>etcd 里的 Secret 应该加密存储</td></tr>
+  <tr><td>RBAC 最小权限</td><td>每个 ServiceAccount 只给必需的权限</td></tr>
+  <tr><td>审计日志</td><td>记录谁什么时候做了什么</td></tr>
+</table>
+
+<h2>完整的 K8s 学习路径回顾</h2>
+
+<pre><code>0014 — 核心概念
+  Pod → Deployment → Service → Namespace → kubectl
+  ↓
+0015 — 网络与配置
+  Ingress → ConfigMap → Secret → Volume/PVC → Probes → 资源限制
+  ↓
+0016 — 生产实践（本课）
+  Helm → HPA → RBAC → 监控 → 安全清单</code></pre>
+
+<h2>动手练习</h2>
+
+<p>如果你有 minikube/kind，试试完成这些任务：</p>
+
+<ol>
+  <li>用 Helm 安装 nginx chart：<code>helm install test bitnami/nginx</code></li>
+  <li>看 Helm 创建了哪些资源：<code>kubectl get all</code></li>
+  <li>卸载：<code>helm uninstall test</code></li>
+  <li>创建一个 Deployment，设 CPU requests=100m limits=500m</li>
+  <li>给这个 Deployment 加 liveness 和 readiness probe</li>
+</ol>
+
+<h2>推荐资源</h2>
+<ul>
+  <li><a href="https://kubernetes.io/docs/tutorials/" target="_blank">K8s 官方教程</a> — 从零到部署的交互式教程</li>
+  <li><a href="https://helm.sh/docs/" target="_blank">Helm 文档</a> — Chart 开发指南</li>
+  <li><a href="https://github.com/prometheus-community/helm-charts" target="_blank">kube-prometheus-stack</a> — 一键 K8s 监控</li>
+  <li><a href="https://killer.sh/" target="_blank">Killer.sh (CKA 模拟)</a> — CKA 认证模拟环境，高强度练习</li>
+</ul>
+
+<div class="tip">
+<strong>🎉 Plan A 全部完成！</strong>从 0001 到 0016，你现在覆盖了 DevOps 从基础到进阶的完整体系：概念 → Linux → Git → Shell → Docker → CI/CD → 部署 → IaC → 监控 → Linux 深入 → 排错 → 网络协议 → 网络实战 → K8s 核心 → K8s 网络 → K8s 生产。
+</div>
+
+<div class="cite">
+<a href="./0015-k8s-networking-config.html">← Lesson 0015</a> · <a href="../reference/glossary.html">术语表</a> · <a href="../MISSION.md">Mission</a>
+</div>
+
+</body>
+</html>

@@ -1,0 +1,332 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Lesson 0007 — 部署：从 Docker 镜像到公网可访问</title>
+<link rel="stylesheet" href="../assets/style.css">
+</head>
+<body>
+
+<h1>Lesson 0007：部署——把你的容器送上公网</h1>
+
+<p>前两课你学会了 Docker 和 CI/CD。但 CI/CD 流水线的终点——部署——还没讲。这课就是把你的容器<strong>真正跑在服务器上，让全世界能访问</strong>。</p>
+
+<h2>部署全景图</h2>
+
+<p>一个典型的单服务器部署架构：</p>
+
+<pre><code>Internet → 80/443 → Nginx（反代）→ :3000 → Docker 容器（你的 App）
+                      ↓ 静态文件
+                      /var/www/html/
+                      ↓ SSL
+                      Let's Encrypt 证书，自动续期</code></pre>
+
+<p>你不需要理解所有组件才能开始。这节课的目标是：<strong>能手动把 Docker 容器部署到一台 Linux 服务器上</strong>。自动化（Terraform、Ansible）是后面的课。</p>
+
+<h2>第一步：准备服务器</h2>
+
+<p>你需要一台带公网 IP 的 Linux 服务器。选项：</p>
+
+<table>
+  <tr><th>方案</th><th>费用</th><th>适合</th></tr>
+  <tr><td>AWS EC2 t2.micro</td><td>免费 12 个月</td><td>学习 + 小项目</td></tr>
+  <tr><td>阿里云 ECS</td><td>~¥50/月</td><td>国内访问快</td></tr>
+  <tr><td>DigitalOcean Droplet</td><td>$6/月</td><td>最简单，5 分钟创建</td></tr>
+  <tr><td>Hetzner VPS</td><td>~€4/月</td><td>性价比最高</td></tr>
+  <tr><td>本地虚拟机（本课用）</td><td>免费</td><td>不花钱就能练</td></tr>
+</table>
+
+<div class="tip">
+<strong>不花钱怎么练？</strong>用你本机的 Docker 跑一个「假服务器」：<code>docker run -d --name fake-server -p 2222:22 -p 8080:80 ubuntu:22.04 tail -f /dev/null</code>，然后 <code>docker exec -it fake-server bash</code> 进去。这就是你的「远程服务器」——所有命令跟 SSH 到真服务器一样，只是用 <code>docker exec</code> 代替 <code>ssh</code>。
+</div>
+
+<h2>第二步：SSH——你登服务器的唯一方式</h2>
+
+<p>你已经有 SSH 密钥了（<code>~/.ssh/id_ed25519</code>）。部署流程如下：</p>
+
+<pre><code># 1. 把公钥复制到服务器（一次性）
+ssh-copy-id user@your-server-ip
+# 等价于手动：cat ~/.ssh/id_ed25519.pub >> 服务器的 ~/.ssh/authorized_keys
+
+# 2. 之后直接免密登录
+ssh user@your-server-ip
+
+# 3. 在服务器上装 Docker（一次性）
+ssh user@your-server-ip << 'EOF'
+  curl -fsSL https://get.docker.com | sh
+  sudo usermod -aG docker $USER
+  # 重新登录后 docker 命令不需要 sudo
+EOF</code></pre>
+
+<div class="note">
+<strong>SSH Key 权限必须是 600</strong>（只有你自己能读写），否则 SSH 拒绝使用。如果你遇到 <code>Permissions 0644 are too open</code> 错误：<code>chmod 600 ~/.ssh/id_ed25519</code>。
+</div>
+
+<h2>第三步：把应用弄到服务器上</h2>
+
+<p>最简单的部署方式：在服务器上 <code>git clone</code> 然后 <code>docker compose up</code>。</p>
+
+<p>创建一个生产环境的 compose 文件：</p>
+
+<pre><code># docker-compose.prod.yml（放在项目根目录）
+services:
+  app:
+    build: .
+    restart: always                 # 挂了自动重启
+    ports:
+      - "127.0.0.1:3000:3000"      # 只监听本地！不让外部直接访问
+    environment:
+      - NODE_ENV=production
+    env_file:
+      - .env.production             # 敏感配置独立文件（不提交到 git）
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"             # 限制日志大小
+        max-file: "3"               # 只保留 3 个日志文件
+
+  # 如果有数据库：
+  # db:
+  #   image: postgres:16-alpine
+  #   restart: always
+  #   volumes:
+  #     - pgdata:/var/lib/postgresql/data
+  #   environment:
+  #     - POSTGRES_PASSWORD=${DB_PASSWORD}
+  #   ports:
+  #     - "127.0.0.1:5432:5432"
+
+# volumes:
+#   pgdata:</code></pre>
+
+<p>关键设计决策：</p>
+<ul>
+  <li><code>restart: always</code> — 容器挂掉或服务器重启后自动拉起。生产必加</li>
+  <li><code>127.0.0.1:3000:3000</code> — 端口只绑在 localhost。外部流量必须走 Nginx（更安全）</li>
+  <li><code>env_file</code> — 敏感配置（数据库密码、API key）放在 <code>.env.production</code>，这个文件<strong>不要提交 git</strong>，手动 scp 到服务器</li>
+</ul>
+
+<h2>第四步：Nginx 反向代理</h2>
+
+<p>Nginx 站在你的应用前面，负责：接收外部 HTTP/HTTPS 请求 → 转发给你的应用容器 → 返回响应。</p>
+
+<pre><code># 在服务器上装 Nginx
+sudo apt update && sudo apt install -y nginx
+
+# 配置反向代理：/etc/nginx/sites-available/myapp
+sudo tee /etc/nginx/sites-available/myapp << 'EOF'
+server {
+    listen 80;
+    server_name your-domain.com;           # 改成你的域名或 IP
+
+    location / {
+        proxy_pass http://127.0.0.1:3000;  # 转发到你的应用
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+
+    # 如果有静态文件：
+    # location /static/ {
+    #     alias /var/www/myapp/static/;
+    #     expires 30d;
+    #     add_header Cache-Control "public, immutable";
+    # }
+}
+EOF
+
+# 启用配置
+sudo ln -s /etc/nginx/sites-available/myapp /etc/nginx/sites-enabled/
+sudo rm /etc/nginx/sites-enabled/default   # 删掉默认站点
+sudo nginx -t                              # 测试配置语法
+sudo systemctl reload nginx                # 重载配置</code></pre>
+
+<h2>第五步：HTTPS（Let's Encrypt 免费证书）</h2>
+
+<pre><code># 有域名的话，一行命令搞定 HTTPS
+sudo apt install -y certbot python3-certbot-nginx
+sudo certbot --nginx -d your-domain.com
+# 证书自动续期：certbot 装好后会自动加 cron/systemd timer
+sudo certbot renew --dry-run   # 测试续期是否正常</code></pre>
+
+<h2>完整部署脚本</h2>
+
+<p>把以上步骤串成一个脚本——这是你以后每次部署跑的东西：</p>
+
+<pre><code>#!/bin/bash
+# deploy.sh —— 在你的本地机器上跑，自动部署到远程服务器
+set -euo pipefail
+
+SERVER="user@your-server-ip"
+APP_DIR="/opt/myapp"
+
+echo "=== Deploying to $SERVER ==="
+
+# 1. Sync code to server
+rsync -avz --exclude 'node_modules' --exclude '.git' ./ $SERVER:$APP_DIR/
+
+# 2. Build and restart on server
+ssh $SERVER << 'ENDSSH'
+  set -e
+  cd /opt/myapp
+  docker compose -f docker-compose.prod.yml down   # 停旧容器
+  docker compose -f docker-compose.prod.yml up -d --build  # 构建并启动新容器
+  docker image prune -f                             # 清理旧镜像
+ENDSSH
+
+echo "=== Deploy complete ==="
+echo "Check: curl http://your-server-ip"</code></pre>
+
+<p>每次部署：<code>./deploy.sh</code>。你的 CI/CD 流水线（Lesson 0006）最终调用的也是类似的脚本。</p>
+
+<div class="note">
+<strong>rsync vs git pull：</strong>两种方式都行。rsync 更快（只传变化的文件），适合从 CI 机器部署。git pull 更简单，适合手动部署。选一个就行。
+</div>
+
+<h2>动手练习：在本地模拟一次部署</h2>
+
+<p>用 Docker 作为「远程服务器」，走一遍完整流程：</p>
+
+<pre><code># === 你的「服务器」 ===
+# 启动一个 Ubuntu 容器模拟远程服务器
+docker run -d --name deploy-target \
+  -p 2222:22 -p 8080:80 \
+  -v /var/run/docker.sock:/var/run/docker.sock \
+  ubuntu:22.04 sleep infinity
+
+# 进「服务器」装 Docker
+docker exec deploy-target bash -c '
+  apt update && apt install -y curl
+  curl -fsSL https://get.docker.com | sh
+'
+
+# === 你的「应用」 ===
+# 在 /tmp 创建一个简单应用（复用 Lesson 0005 的 demo）
+cd /tmp && rm -rf deploy-demo && mkdir deploy-demo && cd deploy-demo
+
+cat > server.js << 'JS'
+const http = require("http");
+const server = http.createServer((req, res) => {
+  res.writeHead(200, {"Content-Type": "text/html"});
+  res.end(`&lt;h1&gt;Deployed!&lt;/h1&gt;&lt;p&gt;Server time: ${new Date().toISOString()}&lt;/p&gt;`);
+});
+server.listen(3000, () => console.log("Listening on :3000"));
+JS
+
+echo '{"name":"deploy-demo","private":true}' > package.json
+
+cat > Dockerfile << 'DF'
+FROM node:22-alpine
+WORKDIR /app
+COPY package.json server.js ./
+EXPOSE 3000
+CMD ["node", "server.js"]
+DF
+
+cat > docker-compose.yml << 'DC'
+services:
+  app:
+    build: .
+    restart: always
+    ports:
+      - "127.0.0.1:3000:3000"
+DC
+
+# 在「服务器」里启动应用
+# （简化版：直接 docker exec 进去操作，模拟 SSH）
+docker cp . deploy-target:/opt/app
+docker exec deploy-target bash -c '
+  cd /opt/app && docker compose up -d --build
+'
+
+# 验证
+docker exec deploy-target curl -s http://127.0.0.1:3000
+# 输出: <h1>Deployed!</h1><p>Server time: 2026-07-19T...</p>
+
+# 清理
+docker rm -f deploy-target</code></pre>
+
+<h2>小测验</h2>
+
+<form id="quiz" onsubmit="return checkQuiz(event)">
+  <fieldset style="border:1px solid var(--border); border-radius:6px; padding:1rem; margin:1rem 0;">
+    <legend style="font-weight:600;">Q1：为什么生产环境端口要绑 <code>127.0.0.1:3000:3000</code> 而不是 <code>3000:3000</code>？</legend>
+    <label><input type="radio" name="q1" value="a"> 127.0.0.1 更快</label>
+    <label><input type="radio" name="q1" value="b"> 只让本机的 Nginx 访问，不暴露给公网</label>
+    <label><input type="radio" name="q1" value="c"> Docker 要求必须指定 IP</label>
+    <label><input type="radio" name="q1" value="d"> 没有区别，习惯而已</label>
+  </fieldset>
+
+  <fieldset style="border:1px solid var(--border); border-radius:6px; padding:1rem; margin:1rem 0;">
+    <legend style="font-weight:600;">Q2：<code>restart: always</code> 的作用是什么？</legend>
+    <label><input type="radio" name="q2" value="a"> 每次代码更新自动重启</label>
+    <label><input type="radio" name="q2" value="b"> 容器退出或服务器重启后自动拉起容器</label>
+    <label><input type="radio" name="q2" value="c"> 每天定时重启</label>
+    <label><input type="radio" name="q2" value="d"> 内存超限时自动重启</label>
+  </fieldset>
+
+  <fieldset style="border:1px solid var(--border); border-radius:6px; padding:1rem; margin:1rem 0;">
+    <legend style="font-weight:600;">Q3：Nginx 在部署架构中的作用是什么？</legend>
+    <label><input type="radio" name="q3" value="a"> 运行 Node.js 应用</label>
+    <label><input type="radio" name="q3" value="b"> 存储数据库</label>
+    <label><input type="radio" name="q3" value="c"> 作为反向代理，接收外部请求并转发给应用</label>
+    <label><input type="radio" name="q3" value="d"> 构建 Docker 镜像</label>
+  </fieldset>
+
+  <fieldset style="border:1px solid var(--border); border-radius:6px; padding:1rem; margin:1rem 0;">
+    <legend style="font-weight:600;">Q4：SSH 密钥权限必须是 600，否则会怎样？</legend>
+    <label><input type="radio" name="q4" value="a"> SSH 连接变慢</label>
+    <label><input type="radio" name="q4" value="b"> 密钥会被自动删除</label>
+    <label><input type="radio" name="q4" value="c"> SSH 拒绝使用该密钥，报 "permissions are too open"</label>
+    <label><input type="radio" name="q4" value="d"> 不影响，SSH 会自动修正权限</label>
+  </fieldset>
+
+  <button type="submit" style="background:var(--accent);color:#fff;border:none;padding:0.6rem 1.5rem;font-size:1rem;border-radius:6px;cursor:pointer;font-family:inherit;">检查答案</button>
+</form>
+
+<div id="quiz-result" style="margin-top:1rem;"></div>
+
+<h2>推荐资源</h2>
+<ul>
+  <li><a href="https://nginx.org/en/docs/beginners_guide.html" target="_blank">Nginx Beginner's Guide</a> — 官方入门，覆盖反向代理、静态文件、负载均衡</li>
+  <li><a href="https://certbot.eff.org/" target="_blank">Certbot 官网</a> — 选择你的 OS 和 Web Server，生成专属 SSL 教程</li>
+  <li><a href="https://docs.docker.com/compose/production/" target="_blank">Docker Compose in Production</a> — Docker 官方生产环境最佳实践</li>
+  <li><a href="https://12factor.net/" target="_blank">The Twelve-Factor App</a> — 云原生应用设计的 12 条原则，DevOps 面试常考</li>
+</ul>
+
+<h2>下一步</h2>
+
+<p>手动部署跑通了。下一课我们把基础设施管理也自动化——<strong>Infrastructure as Code (Terraform)</strong>。用代码定义云资源，一行 <code>terraform apply</code> 创建全套服务器 + 网络 + 防火墙。</p>
+
+<div class="note">
+没有云服务器？先把本地 Docker 模拟流程跑通。原理完全一样——真正的服务器只是多了公网 IP 和域名。等你拿到一台 VPS，把 <code>docker exec</code> 换成 <code>ssh</code> 就行。
+</div>
+
+<div class="cite">
+<a href="./0006-cicd-github-actions.html">← Lesson 0006</a> · <a href="../reference/glossary.html">术语表</a> · <a href="../MISSION.md">Mission</a>
+</div>
+
+<script>
+function checkQuiz(e) {
+  e.preventDefault();
+  const answers = { q1: 'b', q2: 'b', q3: 'c', q4: 'c' };
+  let correct = 0, feedback = [];
+  for (const [q, a] of Object.entries(answers)) {
+    const sel = document.querySelector(`input[name="${q}"]:checked`);
+    if (!sel) feedback.push(q + ': 未作答');
+    else if (sel.value === a) { correct++; feedback.push(q + ': ✓ 正确'); }
+    else feedback.push(q + ': ✗ 错误');
+  }
+  const pct = Math.round(correct/4*100);
+  const div = document.getElementById('quiz-result');
+  div.innerHTML = `<div style="background:${pct===100?'var(--success-bg)':'var(--warn-bg)'};color:${pct===100?'var(--success-fg)':'var(--warn-fg)'};padding:0.75rem 1rem;border-radius:6px;">
+    <strong>得分：${correct}/4 (${pct}%)</strong><br>${feedback.join('<br>')}
+    ${pct===100?'<br>🎉 全对！部署核心概念已掌握。':''}
+  </div>`;
+}
+</script>
+
+</body>
+</html>

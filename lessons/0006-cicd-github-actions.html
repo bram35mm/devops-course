@@ -1,0 +1,262 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Lesson 0006 — CI/CD：代码 push，剩下的交给机器</title>
+<link rel="stylesheet" href="../assets/style.css">
+</head>
+<body>
+
+<h1>Lesson 0006：CI/CD——代码 push，剩下的交给机器</h1>
+
+<p>DevOps 四大支柱的第二根：<strong>CI/CD（持续集成 / 持续交付）</strong>。前几课你学了命令行、Git、脚本、Docker——CI/CD 就是把这些<strong>串成一条自动流水线</strong>。</p>
+
+<p>从现在起，你 push 代码，GitHub 自动帮你做这些事：</p>
+
+<pre><code>git push ──→ 自动跑 lint ──→ 自动跑测试 ──→ 自动构建 Docker 镜像 ──→ 自动部署
+               ↓ 失败？                                       ↓ 成功？
+           PR 上直接标红，                                  合并后自动上线
+           merge 按钮灰掉</code></pre>
+
+<h2>GitHub Actions 三要素</h2>
+
+<p>GitHub Actions 是最流行的免费 CI/CD 平台，直接内建在 GitHub 里。它的工作方式：</p>
+
+<table>
+  <tr><th>概念</th><th>是什么</th><th>类比</th></tr>
+  <tr><td><strong>Workflow（工作流）</strong></td><td>一个 YAML 文件，定义整条流水线</td><td>Shell 脚本的高级版</td></tr>
+  <tr><td><strong>Job（任务）</strong></td><td>流水线的一个独立执行单元</td><td>脚本里的一个函数</td></tr>
+  <tr><td><strong>Step（步骤）</strong></td><td>Job 里的一个具体操作</td><td>函数里的一行命令</td></tr>
+  <tr><td><strong>Runner（执行器）</strong></td><td>跑 Workflow 的虚拟机（Ubuntu/macOS/Windows）</td><td>临时租的一台云服务器</td></tr>
+  <tr><td><strong>Action（动作）</strong></td><td>可复用的步骤，社区共享</td><td>npm 包</td></tr>
+</table>
+
+<h2>你的第一个 Workflow</h2>
+
+<p>把它放在 <code>.github/workflows/ci.yml</code>，push 到 GitHub 就自动运行。</p>
+
+<pre><code>name: CI                          # Workflow 的名字（在 GitHub UI 显示）
+
+on:                               # 什么时候触发
+  push:
+    branches: [main]              # push 到 main 时
+  pull_request:
+    branches: [main]              # 向 main 发 PR 时
+
+jobs:                             # 要跑哪些任务
+  test:                           # 任务名（自定义）
+    runs-on: ubuntu-latest        # 在什么系统上跑
+    steps:                        # 任务里的步骤
+      - uses: actions/checkout@v4    # Step 1: 拉代码（官方 Action）
+      
+      - uses: actions/setup-node@v4  # Step 2: 装 Node.js
+        with:
+          node-version: 22
+          cache: 'npm'               # 自动缓存 node_modules
+      
+      - run: npm ci                  # Step 3: 装依赖
+      - run: npm run lint --if-present  # Step 4: lint（有的话）
+      - run: npm test --if-present   # Step 5: 跑测试</code></pre>
+
+<p>拆解：</p>
+
+<ul>
+  <li><code>on.push.branches: [main]</code> — push 到 main 就触发。也可以用 <code>on: [push]</code>（任何分支 push 都触发）</li>
+  <li><code>runs-on: ubuntu-latest</code> — GitHub 免费提供一台全新的 Ubuntu VM</li>
+  <li><code>uses: actions/checkout@v4</code> — 把仓库代码 checkout 到这台 VM 上。几乎所有 workflow 的第一步</li>
+  <li><code>uses: actions/setup-node@v4</code> — 安装指定版本的 Node.js。GitHub 维护了所有主流语言的 setup action</li>
+  <li><code>run: npm ci</code> — 直接跑命令，跟在终端里敲一样</li>
+</ul>
+
+<div class="note">
+<strong>--if-present 是什么意思？</strong>如果 package.json 里没有 lint/test script，不会报错。防止 workflow 因为缺脚本而失败。
+</div>
+
+<h2>扩建成完整的 CI/CD</h2>
+
+<p>加上 Docker 构建和推送（需要先在 GitHub 上设置 Secrets）：</p>
+
+<pre><code>name: CI + Docker
+
+on:
+  push:
+    branches: [main]
+    tags: ['v*']                  # v1.0.0 这种 tag push 时也触发
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 22, cache: 'npm' }
+      - run: npm ci
+      - run: npm test
+
+  docker:
+    needs: test                   # 等 test job 通过了才跑这个
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Login to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKER_USERNAME }}   # 从 GitHub Secrets 读取
+          password: ${{ secrets.DOCKER_TOKEN }}
+      
+      - name: Build and push
+        uses: docker/build-push-action@v6
+        with:
+          push: true
+          tags: myuser/my-app:latest</code></pre>
+
+<p>关键点：</p>
+
+<ul>
+  <li><code>needs: test</code> — test 通过了才跑 docker。失败则 docker job 直接跳过</li>
+  <li><code>${{ secrets.DOCKER_USERNAME }}</code> — Secrets 存在 GitHub 仓库设置里，workflow 日志中会自动隐藏，不会泄漏</li>
+  <li><code>tags: ['v*']</code> — 只有打 v 开头的 tag 时才触发 docker job（更精细的控制方式）</li>
+</ul>
+
+<h2>常用触发器一览</h2>
+
+<pre><code>on:
+  push:                              # 代码 push
+  pull_request:                      # 发 PR
+  schedule:
+    - cron: '0 2 * * 1'             # 每周一凌晨 2 点（UTC）
+  workflow_dispatch:                 # 允许手动触发（GitHub UI 上点按钮）</code></pre>
+
+<h2>Secrets 怎么设置</h2>
+
+<p>在 GitHub 仓库页面 → Settings → Secrets and variables → Actions → New repository secret。把敏感信息（Docker Hub 密码、SSH 私钥、API token）存在这，workflow 里用 <code>${{ secrets.NAME }}</code> 读取。</p>
+
+<div class="note">
+Secrets 值在 workflow 日志中会被自动替换为 <code>***</code>。但如果你在脚本里 <code>echo $SECRET</code>，它会被隐藏；如果你 <code>echo $SECRET | base64</code>，base64 编码后的值<strong>不会被隐藏</strong>——所以别把 secret 做任何转换再输出。
+</div>
+
+<h2>动手练习：给你的 podcast 项目写 CI</h2>
+
+<p><strong>目标：</strong>为 <code>~/code/podcast</code> 创建 GitHub Actions workflow。</p>
+
+<pre><code># 1. 创建 workflow 目录
+mkdir -p ~/code/podcast/.github/workflows
+
+# 2. 创建 ci.yml
+cat > ~/code/podcast/.github/workflows/ci.yml << 'EOF'
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: 'npm'
+      
+      - run: npm ci
+      - run: npm run build --if-present
+      - run: npm test --if-present
+EOF
+
+# 3. 验证 YAML 语法（可以装个 yamllint）
+cat ~/code/podcast/.github/workflows/ci.yml
+
+# 4. （可选）push 到 GitHub 看它跑起来
+# cd ~/code/podcast && git add .github && git commit -m "ci: add GitHub Actions" && git push</code></pre>
+
+<p>运行结果：每次 push 到 main，GitHub 会：拉代码 → 装 Node 22 → npm ci → npm run build → npm test。全部通过就在 commit 旁边显示绿色 ✓。</p>
+
+<h2>小测验</h2>
+
+<form id="quiz" onsubmit="return checkQuiz(event)">
+  <fieldset style="border:1px solid var(--border); border-radius:6px; padding:1rem; margin:1rem 0;">
+    <legend style="font-weight:600;">Q1：GitHub Actions workflow 文件放在哪个目录？</legend>
+    <label><input type="radio" name="q1" value="a"><code> .github/actions/</code></label>
+    <label><input type="radio" name="q1" value="b"><code> .github/workflows/</code></label>
+    <label><input type="radio" name="q1" value="c"><code> .github/ci/</code></label>
+    <label><input type="radio" name="q1" value="d"><code> workflows/</code></label>
+  </fieldset>
+
+  <fieldset style="border:1px solid var(--border); border-radius:6px; padding:1rem; margin:1rem 0;">
+    <legend style="font-weight:600;">Q2：<code>needs: test</code> 的作用是什么？</legend>
+    <label><input type="radio" name="q2" value="a"> 声明这个 job 需要 Node.js 环境</label>
+    <label><input type="radio" name="q2" value="b"> 等 test job 通过后才运行当前 job</label>
+    <label><input type="radio" name="q2" value="c"> 把 test job 的输出传给当前 job</label>
+    <label><input type="radio" name="q2" value="d"> 声明 test 是当前 job 的子任务</label>
+  </fieldset>
+
+  <fieldset style="border:1px solid var(--border); border-radius:6px; padding:1rem; margin:1rem 0;">
+    <legend style="font-weight:600;">Q3：敏感信息（如 Docker Hub 密码）应该存在哪？</legend>
+    <label><input type="radio" name="q3" value="a"> 直接写在 workflow YAML 里</label>
+    <label><input type="radio" name="q3" value="b"> 存在 <code>.env</code> 文件里</label>
+    <label><input type="radio" name="q3" value="c"> 存在 GitHub Secrets，workflow 里用 <code>${{ secrets.NAME }}</code> 读取</label>
+    <label><input type="radio" name="q3" value="d"> 存在仓库的 README 里</label>
+  </fieldset>
+
+  <fieldset style="border:1px solid var(--border); border-radius:6px; padding:1rem; margin:1rem 0;">
+    <legend style="font-weight:600;">Q4：<code>runs-on: ubuntu-latest</code> 是什么意思？</legend>
+    <label><input type="radio" name="q4" value="a"> 在你的本地 Ubuntu 机器上运行</label>
+    <label><input type="radio" name="q4" value="b"> GitHub 提供一台新的 Ubuntu 虚拟机来运行这个 job</label>
+    <label><input type="radio" name="q4" value="c"> 强制 job 只在 Ubuntu 上才能触发</label>
+    <label><input type="radio" name="q4" value="d"> 连接到你的 AWS Ubuntu 实例</label>
+  </fieldset>
+
+  <button type="submit" style="background:var(--accent);color:#fff;border:none;padding:0.6rem 1.5rem;font-size:1rem;border-radius:6px;cursor:pointer;font-family:inherit;">检查答案</button>
+</form>
+
+<div id="quiz-result" style="margin-top:1rem;"></div>
+
+<h2>推荐资源</h2>
+<ul>
+  <li><a href="https://docs.github.com/en/actions" target="_blank">GitHub Actions 官方文档</a> — 完整参考，含所有可用 runner 的预装软件列表</li>
+  <li><a href="https://github.com/actions" target="_blank">github.com/actions</a> — 官方 Action 仓库（checkout、setup-node、setup-python 等）</li>
+  <li><a href="https://github.com/marketplace?type=actions" target="_blank">GitHub Marketplace - Actions</a> — 社区共享的 Action，几乎任何需求都有现成的</li>
+  <li><a href="https://github.com/sdras/awesome-actions" target="_blank">awesome-actions</a> — 精选 Action 列表</li>
+</ul>
+
+<h2>下一步</h2>
+
+<p>你的 CI/CD 流水线跑起来了。但代码最终要部署到服务器上。下一课——<strong>部署实战：从 Docker 镜像到公网可访问</strong>，你将在云服务器上把你的容器真正跑起来。</p>
+
+<div class="note">
+如果你没有 GitHub 仓库？建议现在就把 <code>~/code/podcast</code> 推上去试试。没有 GitHub 账户也可以只把 workflow 文件写好，理解结构就行。workflow 的 YAML 本身不依赖 GitHub——GitLab CI、Bitbucket Pipelines 的语法非常相似。
+</div>
+
+<div class="cite">
+<a href="./0005-docker-basics.html">← Lesson 0005</a> · <a href="../reference/glossary.html">术语表</a> · <a href="../MISSION.md">Mission</a>
+</div>
+
+<script>
+function checkQuiz(e) {
+  e.preventDefault();
+  const answers = { q1: 'b', q2: 'b', q3: 'c', q4: 'b' };
+  let correct = 0, feedback = [];
+  for (const [q, a] of Object.entries(answers)) {
+    const sel = document.querySelector(`input[name="${q}"]:checked`);
+    if (!sel) feedback.push(q + ': 未作答');
+    else if (sel.value === a) { correct++; feedback.push(q + ': ✓ 正确'); }
+    else feedback.push(q + ': ✗ 错误');
+  }
+  const pct = Math.round(correct/4*100);
+  const div = document.getElementById('quiz-result');
+  div.innerHTML = `<div style="background:${pct===100?'var(--success-bg)':'var(--warn-bg)'};color:${pct===100?'var(--success-fg)':'var(--warn-fg)'};padding:0.75rem 1rem;border-radius:6px;">
+    <strong>得分：${correct}/4 (${pct}%)</strong><br>${feedback.join('<br>')}
+    ${pct===100?'<br>🎉 全对！CI/CD 核心概念已掌握。':''}
+  </div>`;
+}
+</script>
+
+</body>
+</html>

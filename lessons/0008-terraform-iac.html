@@ -1,0 +1,356 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Lesson 0008 — IaC：用代码管理基础设施</title>
+<link rel="stylesheet" href="../assets/style.css">
+</head>
+<body>
+
+<h1>Lesson 0008：IaC——服务器配置也能 commit</h1>
+
+<p>DevOps 四大支柱的第三根：<strong>Infrastructure as Code（基础设施即代码）</strong>。</p>
+
+<p>想想你现在的部署流程：手动 SSH 到服务器 → apt install → 改 Nginx 配置 → docker compose up。如果服务器挂了，你能在 5 分钟内重建吗？如果你管 10 台服务器，能保证配置一致吗？</p>
+
+<p>IaC 的回答：<strong>把服务器、网络、防火墙、数据库——全部用代码定义。想改就改代码，想重建就跑命令，想回滚就 git revert。</strong></p>
+
+<h2>Terraform：IaC 的事实标准</h2>
+
+<p>Terraform 是 HashiCorp 出品的 IaC 工具。工作方式：</p>
+
+<pre><code>你写 .tf 文件  ──→  terraform plan（预览变更）  ──→  terraform apply（执行变更）
+（声明你想要什么）     （看看会发生什么）               （Do it）</code></pre>
+
+<p>核心概念：</p>
+
+<table>
+  <tr><th>概念</th><th>是什么</th><th>类比</th></tr>
+  <tr><td><strong>Provider</strong></td><td>「驱动」——Terraform 通过它操作具体平台</td><td>数据库驱动（mysql driver、pg driver）</td></tr>
+  <tr><td><strong>Resource</strong></td><td>你要管理的一个东西（服务器、网络、域名…）</td><td>一个 DOM 元素</td></tr>
+  <tr><td><strong>State</strong></td><td>Terraform 记录的「当前世界是什么样」</td><td>React 的 Virtual DOM</td></tr>
+  <tr><td><strong>Plan</strong></td><td>「代码」和「现实」的 diff</td><td><code>git diff</code></td></tr>
+  <tr><td><strong>Apply</strong></td><td>把 diff 变成现实</td><td><code>git commit</code></td></tr>
+</table>
+
+<div class="tip">
+Terraform 是<strong>声明式</strong>的：你告诉它「我要什么」，它算出来「需要做什么」。而 Ansible 是<strong>过程式</strong>的：你告诉它「先做 A 再做 B」。两种方式各有适用场景，Terraform 偏基础设施创建，Ansible 偏服务器配置。
+</div>
+
+<h2>安装 Terraform</h2>
+
+<pre><code># Ubuntu
+wget -O- https://apt.releases.hashicorp.com/gpg | sudo gpg --dearmor -o /usr/share/keyrings/hashicorp-archive-keyring.gpg
+echo "deb [signed-by=/usr/share/keyrings/hashicorp-archive-keyring.gpg] https://apt.releases.hashicorp.com $(lsb_release -cs) main" | sudo tee /etc/apt/sources.list.d/hashicorp.list
+sudo apt update && sudo apt install -y terraform
+terraform version   # 验证安装</code></pre>
+
+<h2>第一个 Terraform 项目：管理 Docker 容器</h2>
+
+<p>不用云账号。用 Docker provider 在本地练习——概念和操作完全一样。</p>
+
+<pre><code>mkdir /tmp/terraform-demo && cd /tmp/terraform-demo
+
+# main.tf —— 主配置文件
+cat > main.tf << 'EOF'
+terraform {
+  required_providers {
+    docker = {
+      source  = "kreuzwerker/docker"
+      version = "~> 3.0"
+    }
+  }
+}
+
+provider "docker" {}           # 连本机 Docker daemon
+
+# 拉取 nginx 镜像
+resource "docker_image" "nginx" {
+  name         = "nginx:alpine"
+  keep_locally = true           # 本地有就别再下载
+}
+
+# 创建 nginx 容器
+resource "docker_container" "nginx" {
+  image = docker_image.nginx.image_id
+  name  = "tf-nginx"
+  ports {
+    internal = 80
+    external = 8888             # 宿主机 8888 → 容器 80
+  }
+}
+
+# 输出：部署后告诉我怎么访问
+output "url" {
+  value = "http://localhost:8888"
+}
+EOF</code></pre>
+
+<p>逐行解释：</p>
+<ul>
+  <li><code>terraform { required_providers {...} }</code> — 声明需要哪些 provider（类似 package.json 的 dependencies）</li>
+  <li><code>provider "docker" {}</code> — 配置 provider（这里用默认配置，连本地 Docker socket）</li>
+  <li><code>resource "docker_image" "nginx"</code> — 声明一个资源：「我要一个 nginx:alpine 镜像」</li>
+  <li><code>resource "docker_container" "nginx"</code> — 声明另一个资源：「我要一个容器，用上面那个镜像」</li>
+  <li><code>docker_image.nginx.image_id</code> — 引用另一个资源的属性。Terraform 自动分析依赖顺序</li>
+  <li><code>output "url"</code> — 执行完输出一个值，方便你直接用</li>
+</ul>
+
+<h2>运行——看魔法发生</h2>
+
+<pre><code>cd /tmp/terraform-demo
+
+# 1. 初始化（下载 provider，类似 npm install）
+terraform init
+
+# 2. 预览变更（不实际执行，看看会发生什么）
+terraform plan
+# 输出：+ create 表示要创建 2 个资源
+
+# 3. 执行变更
+terraform apply
+# 输入 yes 确认
+
+# 4. 验证
+curl http://localhost:8888
+# 看到 nginx 欢迎页！
+
+docker ps --filter "name=tf-nginx"
+# 看到 tf-nginx 容器在跑
+
+# 5. 查看状态
+terraform show     # 显示当前所有资源
+
+# 6. 销毁一切
+terraform destroy
+# 输入 yes 确认后，容器和镜像全部删除</code></pre>
+
+<p>现在改一下配置，看看 Terraform 怎么处理变更：</p>
+
+<pre><code># 把端口从 8888 改成 9999
+sed -i 's/8888/9999/' main.tf
+
+terraform plan
+# 输出：-/+ destroy and then recreate（检测到端口变化，需要重建容器）
+
+terraform apply -auto-approve
+# 跳过确认直接执行
+curl http://localhost:9999
+# 还是 nginx 欢迎页！</code></pre>
+
+<h2>变量和输出——让配置可复用</h2>
+
+<pre><code># variables.tf —— 声明变量
+cat > variables.tf << 'EOF'
+variable "app_port" {
+  description = "External port for the app"
+  type        = number
+  default     = 8888
+}
+
+variable "environment" {
+  description = "Deployment environment"
+  type        = string
+  default     = "dev"
+}
+EOF
+
+# 在 main.tf 里用变量
+sed -i 's/external = 9999/external = var.app_port/' main.tf
+sed -i 's/name  = "tf-nginx"/name  = "tf-nginx-${var.environment}"/' main.tf
+
+# 用不同参数运行
+terraform apply -var="app_port=7777" -var="environment=prod" -auto-approve
+# 容器名变成 tf-nginx-prod，端口 7777</code></pre>
+
+<h2>State——Terraform 的记忆</h2>
+
+<p>Terraform 把「上次 apply 后世界长什么样」记录在 <code>terraform.tfstate</code> 文件里。这是它最核心的概念。</p>
+
+<pre><code>cat terraform.tfstate | python3 -m json.tool | head -20
+# 看到所有资源的当前状态</code></pre>
+
+<p>团队协作时，state 文件不能存在本地——你同事的 state 跟你的不一样。解决方法：<strong>Remote State</strong>（存在 S3/GCS/Terraform Cloud 上），团队共享一份 state。</p>
+
+<div class="note">
+<strong>State 文件 = 敏感信息。</strong>里面可能包含数据库密码、API key。永远不要提交 <code>terraform.tfstate</code> 到 Git。用 <code>.gitignore</code> 排除它，用 remote state backend 管理。
+</div>
+
+<h2>真实场景：AWS EC2 + Security Group</h2>
+
+<p>换成云 provider，语法完全一样：</p>
+
+<pre><code>provider "aws" {
+  region = "us-east-1"
+}
+
+resource "aws_security_group" "web" {
+  name        = "web-sg"
+  description = "Allow HTTP and SSH"
+
+  ingress {
+    from_port   = 80
+    to_port     = 80
+    protocol    = "tcp"
+    cidr_blocks = ["0.0.0.0/0"]    # 允许所有人访问 80 端口
+  }
+
+  ingress {
+    from_port   = 22
+    to_port     = 22
+    protocol    = "tcp"
+    cidr_blocks = ["0.0.0.0/0"]    # 允许所有人 SSH
+  }
+
+  egress {
+    from_port   = 0
+    to_port     = 0
+    protocol    = "-1"            # 允许所有出站流量
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+}
+
+resource "aws_instance" "web" {
+  ami           = "ami-0c55b159cbfafe1f0"  # Ubuntu 22.04
+  instance_type = "t2.micro"               # 免费套餐
+  security_groups = [aws_security_group.web.name]
+  key_name      = "my-ssh-key"
+
+  user_data = <<-EOF
+    #!/bin/bash
+    apt update && apt install -y nginx
+    systemctl start nginx
+  EOF
+
+  tags = {
+    Name = "web-server"
+  }
+}
+
+output "public_ip" {
+  value = aws_instance.web.public_ip
+}</code></pre>
+
+<p>跟 Docker provider 完全一样的模式：声明 provider → 声明 resource → 引用 → output。换 provider 就是换一套 resource 类型名，核心逻辑不变。</p>
+
+<h2>动手练习：用 Terraform 管理 Nginx + 你的应用</h2>
+
+<pre><code>cd /tmp && rm -rf tf-practice && mkdir tf-practice && cd tf-practice
+
+cat > main.tf << 'EOF'
+terraform {
+  required_providers {
+    docker = { source = "kreuzwerker/docker"; version = "~> 3.0" }
+  }
+}
+provider "docker" {}
+
+resource "docker_image" "nginx" {
+  name = "nginx:alpine"
+  keep_locally = true
+}
+
+resource "docker_container" "web" {
+  image = docker_image.nginx.image_id
+  name  = "tf-web"
+  ports { internal = 80; external = 8080 }
+}
+
+output "access_url" {
+  value = "http://localhost:8080"
+}
+EOF
+
+terraform init
+terraform apply -auto-approve
+curl http://localhost:8080
+
+# 你的任务：
+# 1. 再加一个容器（如 redis:alpine），暴露端口 6379
+# 2. 用 terraform plan 看变更预览
+# 3. terraform apply 创建
+# 4. terraform destroy 清理</code></pre>
+
+<h2>小测验</h2>
+
+<form id="quiz" onsubmit="return checkQuiz(event)">
+  <fieldset style="border:1px solid var(--border); border-radius:6px; padding:1rem; margin:1rem 0;">
+    <legend style="font-weight:600;">Q1：Terraform 是声明式还是过程式？</legend>
+    <label><input type="radio" name="q1" value="a"> 过程式——需要告诉它每一步怎么做</label>
+    <label><input type="radio" name="q1" value="b"> 声明式——告诉它要什么结果，它自己算步骤</label>
+    <label><input type="radio" name="q1" value="c"> 两者都不是</label>
+    <label><input type="radio" name="q1" value="d"> 取决于 provider</label>
+  </fieldset>
+
+  <fieldset style="border:1px solid var(--border); border-radius:6px; padding:1rem; margin:1rem 0;">
+    <legend style="font-weight:600;">Q2：<code>terraform plan</code> 做什么？</legend>
+    <label><input type="radio" name="q2" value="a"> 立即执行所有变更</label>
+    <label><input type="radio" name="q2" value="b"> 预览将要发生的变更，不实际执行</label>
+    <label><input type="radio" name="q2" value="c"> 删除所有资源</label>
+    <label><input type="radio" name="q2" value="d"> 下载 provider</label>
+  </fieldset>
+
+  <fieldset style="border:1px solid var(--border); border-radius:6px; padding:1rem; margin:1rem 0;">
+    <legend style="font-weight:600;">Q3：为什么 <code>terraform.tfstate</code> 不能提交到 Git？</legend>
+    <label><input type="radio" name="q3" value="a"> 文件太大，GitHub 会拒绝</label>
+    <label><input type="radio" name="q3" value="b"> 可能导致团队 state 不一致，且可能包含敏感信息</label>
+    <label><input type="radio" name="q3" value="c"> Terraform 会自动提交它</label>
+    <label><input type="radio" name="q3" value="d"> 没有这个文件</label>
+  </fieldset>
+
+  <fieldset style="border:1px solid var(--border); border-radius:6px; padding:1rem; margin:1rem 0;">
+    <legend style="font-weight:600;">Q4：Provider 在 Terraform 中的作用是什么？</legend>
+    <label><input type="radio" name="q4" value="a"> 存储 state 文件</label>
+    <label><input type="radio" name="q4" value="b"> 提供 Terraform 的 Web UI</label>
+    <label><input type="radio" name="q4" value="c"> 翻译 HCL 为具体平台的 API 调用（AWS、Docker、GCP 等）</label>
+    <label><input type="radio" name="q4" value="d"> 管理 Git 仓库</label>
+  </fieldset>
+
+  <button type="submit" style="background:var(--accent);color:#fff;border:none;padding:0.6rem 1.5rem;font-size:1rem;border-radius:6px;cursor:pointer;font-family:inherit;">检查答案</button>
+</form>
+
+<div id="quiz-result" style="margin-top:1rem;"></div>
+
+<h2>推荐资源</h2>
+<ul>
+  <li><a href="https://developer.hashicorp.com/terraform/tutorials" target="_blank">Terraform 官方教程</a> — 从 Docker 到 AWS 到手把手，最好的入门路径</li>
+  <li><a href="https://registry.terraform.io/" target="_blank">Terraform Registry</a> — 所有 provider 和 module 的文档</li>
+  <li><a href="https://blog.gruntwork.io/a-comprehensive-guide-to-terraform-b3d32832baca" target="_blank">A Comprehensive Guide to Terraform (Gruntwork)</a> — 深入讲 state、module、最佳实践</li>
+  <li><a href="https://github.com/terraform-docs/terraform-docs" target="_blank">terraform-docs</a> — 从 .tf 文件自动生成文档</li>
+</ul>
+
+<h2>下一步</h2>
+
+<p>最后一课：<strong>监控 & 可观测性</strong>——你的服务上线了，怎么知道它还活着？怎么在用户发现之前知道出问题了？Prometheus + Grafana，DevOps 四大支柱的最后一根。</p>
+
+<div class="note">
+<code>terraform destroy</code> 之后确认 <code>docker ps</code> 容器确实没了。如果还在，手动 <code>docker rm -f tf-nginx</code>。Terraform 管理的东西不要手动改——会造成 state 和现实不一致。
+</div>
+
+<div class="cite">
+<a href="./0007-deployment.html">← Lesson 0007</a> · <a href="../reference/glossary.html">术语表</a> · <a href="../MISSION.md">Mission</a>
+</div>
+
+<script>
+function checkQuiz(e) {
+  e.preventDefault();
+  const answers = { q1: 'b', q2: 'b', q3: 'b', q4: 'c' };
+  let correct = 0, feedback = [];
+  for (const [q, a] of Object.entries(answers)) {
+    const sel = document.querySelector(`input[name="${q}"]:checked`);
+    if (!sel) feedback.push(q + ': 未作答');
+    else if (sel.value === a) { correct++; feedback.push(q + ': ✓ 正确'); }
+    else feedback.push(q + ': ✗ 错误');
+  }
+  const pct = Math.round(correct/4*100);
+  const div = document.getElementById('quiz-result');
+  div.innerHTML = `<div style="background:${pct===100?'var(--success-bg)':'var(--warn-bg)'};color:${pct===100?'var(--success-fg)':'var(--warn-fg)'};padding:0.75rem 1rem;border-radius:6px;">
+    <strong>得分：${correct}/4 (${pct}%)</strong><br>${feedback.join('<br>')}
+    ${pct===100?'<br>🎉 全对！IaC 核心概念已掌握。':''}
+  </div>`;
+}
+</script>
+
+</body>
+</html>

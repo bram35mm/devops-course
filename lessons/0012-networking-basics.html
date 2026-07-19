@@ -1,0 +1,189 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Lesson 0012 — 网络协议基础</title>
+<link rel="stylesheet" href="../assets/style.css">
+</head>
+<body>
+
+<h1>Lesson 0012：网络协议——TCP、DNS、TLS 面试三件套</h1>
+
+<p><a href="./0011-linux-troubleshooting.html">← Lesson 0011</a> 教你排错。排错需要理解底层——这课讲 DevOps 面试最常考的三个网络协议。</p>
+
+<h2>模型：TCP/IP 四层</h2>
+
+<pre><code>应用层    HTTP, DNS, TLS, SSH     ← 你的代码在这一层
+传输层    TCP, UDP                 ← 端口、连接、可靠性
+网络层    IP, ICMP                 ← 寻址、路由
+链路层    Ethernet, Wi-Fi          ← 物理传输</code></pre>
+
+<p>面试问「浏览器输入 URL 后发生了什么」，答案就是这四层从上到下再回来。</p>
+
+<h2>Topic 1：TCP——三次握手，四次挥手</h2>
+
+<h3>三次握手（建立连接）</h3>
+
+<pre><code>Client                           Server
+  | -------- SYN -------→        |  1. 客户端：我想连你
+  | ←--- SYN + ACK ------        |  2. 服务端：好的，我也想连你
+  | -------- ACK -------→        |  3. 客户端：确认</code></pre>
+
+<p><strong>为什么三次不是两次？</strong>防止旧的 SYN 包让服务端错误打开连接。</p>
+
+<h3>四次挥手（关闭连接）</h3>
+
+<pre><code>Client                           Server
+  | -------- FIN -------→        |  1. 客户端：我不发了
+  | ←------- ACK --------        |  2. 服务端：收到（可能还有数据）
+  | ←------- FIN --------        |  3. 服务端：我也不发了
+  | -------- ACK -------→        |  4. 客户端：收到</code></pre>
+
+<p><strong>为什么挥手多一次？</strong>TCP 是全双工——双方独立关闭。服务端收到 FIN 后可能还有数据要发。</p>
+
+<h3>关键连接状态</h3>
+
+<table>
+  <tr><th>状态</th><th>含义</th><th>注意</th></tr>
+  <tr><td><code>LISTEN</code></td><td>等待连接</td><td>正常</td></tr>
+  <tr><td><code>ESTABLISHED</code></td><td>连接中</td><td>正常</td></tr>
+  <tr><td><code>TIME_WAIT</code></td><td>主动关闭方等待 2MSL（~60s）</td><td>正常，大量出现调内核参数</td></tr>
+  <tr><td><code>CLOSE_WAIT</code></td><td>收到 FIN 但自己没关</td><td><strong>⚠️ 堆积 = 应用 bug</strong>（忘了 close）</td></tr>
+</table>
+
+<h2>Topic 2：DNS——域名怎么变成 IP</h2>
+
+<pre><code>example.com → ?
+  1. 浏览器缓存
+  2. OS 缓存（/etc/hosts）
+  3. Local DNS Resolver（路由器 / 8.8.8.8）
+     → 4. Root DNS（根服务器）
+     → 5. TLD DNS（.com 服务器）
+     → 6. Authoritative DNS（example.com 的 NS 服务器）
+  7. 返回 IP: 93.184.216.34</code></pre>
+
+<p>常见记录类型：</p>
+
+<table>
+  <tr><th>类型</th><th>作用</th><th>例子</th></tr>
+  <tr><td><code>A</code></td><td>域名 → IPv4</td><td><code>example.com. A 93.184.216.34</code></td></tr>
+  <tr><td><code>AAAA</code></td><td>域名 → IPv6</td><td><code>example.com. AAAA 2606:2800:...</code></td></tr>
+  <tr><td><code>CNAME</code></td><td>别名 → 真名</td><td><code>www.example.com. CNAME example.com.</code></td></tr>
+  <tr><td><code>MX</code></td><td>邮件服务器</td><td><code>example.com. MX 10 mail.example.com.</code></td></tr>
+  <tr><td><code>NS</code></td><td>权威 DNS 服务器</td><td><code>example.com. NS ns1.example.com.</code></td></tr>
+  <tr><td><code>TXT</code></td><td>任意文本</td><td>SPF、DKIM、域名验证</td></tr>
+</table>
+
+<pre><code># DNS 排查工具
+dig example.com                    # 完整 DNS 查询过程
+dig example.com +short             # 只输出结果
+dig -x 93.184.216.34               # 反向查询（IP → 域名）
+dig example.com NS                  # 查 NS 记录
+dig @8.8.8.8 example.com           # 指定 DNS 服务器</code></pre>
+
+<h2>Topic 3：TLS——HTTPS 的 S 是怎么工作的</h2>
+
+<pre><code>Client                           Server
+  | -- ClientHello ---------→    |  "我支持 TLS 1.3, 这些加密套件"
+  | ←- ServerHello + 证书 -----  |  "用这个套件，这是我的证书"
+  |                               |
+  | 验证证书链：                   |
+  |  example.com 证书              |
+  |    ↑ 由中间 CA 签发            |
+  |    ↑ 由根 CA 签发（信任锚点）  |
+  |                               |
+  | -- 密钥交换 ------------→     |  生成对称加密密钥
+  | ←- 确认 ---------------      |
+  |                               |
+  | ==== 之后所有通信都加密 ======</code></pre>
+
+<p><strong>证书链：</strong>你的域名证书 ← 中间 CA 证书 ← 根 CA 证书（预装在操作系统/浏览器里）。任何一环断了就是「证书不受信任」。</p>
+
+<pre><code># 用 openssl 看证书
+openssl s_client -connect example.com:443 -servername example.com | openssl x509 -noout -dates
+# notBefore=...  notAfter=...    ← 证书有效期
+
+# 看完整证书链
+openssl s_client -connect example.com:443 -showcerts
+
+# 测试 TLS 版本
+openssl s_client -connect example.com:443 -tls1_3</code></pre>
+
+<div class="note">
+<strong>面试常问：HTTP 和 HTTPS 的区别，答四层：</strong>① 加密（TLS 加密数据）② 认证（证书验证身份）③ 完整性（防止篡改）④ 默认端口不同（80 vs 443）。
+</div>
+
+<h2>HTTP 状态码速记</h2>
+
+<table>
+  <tr><th>范围</th><th>含义</th><th>经典</th></tr>
+  <tr><td>2xx</td><td>成功</td><td>200 OK, 201 Created, 204 No Content</td></tr>
+  <tr><td>3xx</td><td>重定向</td><td>301 永久, 302 临时, 304 缓存未修改</td></tr>
+  <tr><td>4xx</td><td>客户端错误</td><td>400 请求错误, 401 未认证, 403 无权限, 404 未找到, 429 请求太多</td></tr>
+  <tr><td>5xx</td><td>服务端错误</td><td>500 内部错误, 502 网关错误, 503 服务不可用, 504 网关超时</td></tr>
+</table>
+
+<p><strong>502 vs 504：</strong>502 = Nginx 连不上后端（后端挂了/没启动）。504 = Nginx 连上了但后端太久不响应。</p>
+
+<h2>小测验</h2>
+
+<form id="quiz" onsubmit="return checkQuiz(event)">
+  <fieldset style="border:1px solid var(--border); border-radius:6px; padding:1rem; margin:1rem 0;">
+    <legend style="font-weight:600;">Q1：TCP 为什么是三次握手而不是两次？</legend>
+    <label><input type="radio" name="q1" value="a"> TCP 设计者喜欢奇数</label>
+    <label><input type="radio" name="q1" value="b"> 防止旧的 SYN 包导致服务端错误打开连接</label>
+    <label><input type="radio" name="q1" value="c"> 三次比两次更安全（加密）</label>
+    <label><input type="radio" name="q1" value="d"> 因为 UDP 是两次，TCP 要比它多一次</label>
+  </fieldset>
+
+  <fieldset style="border:1px solid var(--border); border-radius:6px; padding:1rem; margin:1rem 0;">
+    <legend style="font-weight:600;">Q2：502 Bad Gateway 和 504 Gateway Timeout 的区别？</legend>
+    <label><input type="radio" name="q2" value="a"> 没有区别，都是后端出问题</label>
+    <label><input type="radio" name="q2" value="b"> 502=连不上后端，504=连上了但后端超时</label>
+    <label><input type="radio" name="q2" value="c"> 502=超时，504=连不上</label>
+    <label><input type="radio" name="q2" value="d"> 502 是客户端错误，504 是服务端错误</label>
+  </fieldset>
+
+  <fieldset style="border:1px solid var(--border); border-radius:6px; padding:1rem; margin:1rem 0;">
+    <legend style="font-weight:600;">Q3：TLS 证书链的「信任锚点」是什么？</legend>
+    <label><input type="radio" name="q3" value="a"> 你的域名证书</label>
+    <label><input type="radio" name="q3" value="b"> 中间 CA 证书</label>
+    <label><input type="radio" name="q3" value="c"> 根 CA 证书（预装在操作系统里）</label>
+    <label><input type="radio" name="q3" value="d"> Let's Encrypt 的服务器</label>
+  </fieldset>
+
+  <button type="submit" style="background:var(--accent);color:#fff;border:none;padding:0.6rem 1.5rem;font-size:1rem;border-radius:6px;cursor:pointer;font-family:inherit;">检查答案</button>
+</form>
+
+<div id="quiz-result" style="margin-top:1rem;"></div>
+
+<h2>下一步</h2>
+
+<p><a href="./0013-networking-practice.html">Lesson 0013：网络实战与负载均衡 →</a>——Nginx upstream、健康检查、限流、CDN 原理、真实排错场景。</p>
+
+<div class="cite">
+<a href="./0011-linux-troubleshooting.html">← Lesson 0011</a> · <a href="./0013-networking-practice.html">Lesson 0013 →</a> · <a href="../reference/glossary.html">术语表</a>
+</div>
+
+<script>
+function checkQuiz(e) {
+  e.preventDefault();
+  const answers = { q1: 'b', q2: 'b', q3: 'c' };
+  let correct = 0, feedback = [];
+  for (const [q, a] of Object.entries(answers)) {
+    const sel = document.querySelector(`input[name="${q}"]:checked`);
+    if (!sel) feedback.push(q + ': 未作答');
+    else if (sel.value === a) { correct++; feedback.push(q + ': ✓ 正确'); }
+    else feedback.push(q + ': ✗ 错误');
+  }
+  const pct = Math.round(correct/3*100);
+  const div = document.getElementById('quiz-result');
+  div.innerHTML = `<div style="background:${pct===100?'var(--success-bg)':'var(--warn-bg)'};color:${pct===100?'var(--success-fg)':'var(--warn-fg)'};padding:0.75rem 1rem;border-radius:6px;">
+    <strong>得分：${correct}/3 (${pct}%)</strong><br>${feedback.join('<br>')}
+  </div>`;
+}
+</script>
+
+</body>
+</html>

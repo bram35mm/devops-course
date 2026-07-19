@@ -1,0 +1,231 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Lesson 0014 — Kubernetes 核心概念</title>
+<link rel="stylesheet" href="../assets/style.css">
+</head>
+<body>
+
+<h1>Lesson 0014：Kubernetes 核心——Pod、Deployment、Service</h1>
+
+<p><a href="./0013-networking-practice.html">← Lesson 0013</a> 讲了网络和负载均衡。Kubernetes 把容器编排、负载均衡、服务发现、自愈全部内置了——这就是为什么它是云原生的操作系统。</p>
+
+<h2>K8s 解决什么问题？</h2>
+
+<p>你手动管 Docker：<code>docker run</code>、<code>docker stop</code>、配端口、设重启策略。管 3 个容器还行。管 50 个呢？跨 5 台机器呢？</p>
+
+<p>Kubernetes = <strong>容器操作系统</strong>。你声明「我要 3 个 nginx 副本，CPU 不超过 500m，挂了自动重启」，K8s 自己去调度、监控、修复。</p>
+
+<h2>架构：Master + Node</h2>
+
+<pre><code>Control Plane (Master)               Worker Nodes
+┌──────────────────────┐       ┌──────────────────┐
+│ API Server           │       │ kubelet          │
+│ Scheduler            │       │ container runtime│
+│ Controller Manager   │       │ kube-proxy       │
+│ etcd (数据库)        │       │    Pod  Pod  Pod  │
+└──────────────────────┘       └──────────────────┘</code></pre>
+
+<p>你只跟 API Server 打交道（通过 kubectl）。Scheduler 决定 Pod 放哪个 Node。Controller Manager 持续对比「实际状态」和「期望状态」。</p>
+
+<h2>核心对象一：Pod——最小调度单元</h2>
+
+<p>Pod 是 K8s 的最小单元，包含一个或多个<strong>共享网络和存储</strong>的容器。</p>
+
+<pre><code># pod.yaml
+apiVersion: v1
+kind: Pod
+metadata:
+  name: my-app
+  labels:
+    app: web              # 标签——Service 靠这个找 Pod
+spec:
+  containers:
+    - name: app
+      image: nginx:alpine
+      ports:
+        - containerPort: 80</code></pre>
+
+<pre><code>kubectl apply -f pod.yaml       # 创建
+kubectl get pods                 # 列出
+kubectl describe pod my-app      # 详细信息（排错用）
+kubectl logs my-app              # 看日志
+kubectl exec -it my-app -- sh    # 进去
+kubectl delete pod my-app        # 删除</code></pre>
+
+<div class="note">
+<strong>一般不直接创建 Pod。</strong> Pod 是临时性的——挂了就没了。用 Deployment 管理 Pod 的生命周期。
+</div>
+
+<h2>核心对象二：Deployment——管理 Pod 的控制器</h2>
+
+<p>Deployment 声明「我要 N 个一模一样的 Pod」，K8s 保证实际数量 = 期望数量。</p>
+
+<pre><code># deployment.yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: web-deploy
+spec:
+  replicas: 3                       # 3 个副本
+  selector:
+    matchLabels:
+      app: web
+  template:                          # Pod 模板
+    metadata:
+      labels:
+        app: web
+    spec:
+      containers:
+        - name: nginx
+          image: nginx:alpine
+          ports:
+            - containerPort: 80</code></pre>
+
+<pre><code>kubectl apply -f deployment.yaml
+kubectl get deployments
+kubectl get pods                    # 看到 3 个 Pod
+
+# 滚动更新
+kubectl set image deployment/web-deploy nginx=nginx:1.25
+kubectl rollout status deployment/web-deploy
+
+# 回滚
+kubectl rollout undo deployment/web-deploy
+
+# 扩缩容
+kubectl scale deployment/web-deploy --replicas=5</code></pre>
+
+<h2>核心对象三：Service——稳定的网络入口</h2>
+
+<p>Pod 的 IP 是临时的（Pod 重建 IP 就变了）。Service 提供<strong>固定的 Cluster IP + DNS 名</strong>，自动负载均衡到健康的 Pod。</p>
+
+<pre><code># service.yaml
+apiVersion: v1
+kind: Service
+metadata:
+  name: web-svc
+spec:
+  selector:
+    app: web                  # 选中带 app=web 标签的 Pod
+  ports:
+    - port: 80                # Service 的端口
+      targetPort: 80          # Pod 的端口
+  type: ClusterIP             # 仅集群内部可访问（默认）</code></pre>
+
+<table>
+  <tr><th>Service Type</th><th>效果</th><th>什么时候用</th></tr>
+  <tr><td><code>ClusterIP</code></td><td>集群内部访问</td><td>服务间通信（默认）</td></tr>
+  <tr><td><code>NodePort</code></td><td>每个 Node 开一个端口（30000-32767）</td><td>调试 / 简单暴露</td></tr>
+  <tr><td><code>LoadBalancer</code></td><td>云服务商创建外部 LB</td><td>生产对外暴露</td></tr>
+</table>
+
+<h2>核心对象四：Namespace——虚拟集群</h2>
+
+<pre><code>kubectl get namespaces
+kubectl create namespace staging
+kubectl apply -f deployment.yaml -n staging
+# 不同 namespace 的资源互相隔离，同名不冲突</code></pre>
+
+<h2>本地运行 K8s</h2>
+
+<pre><code># 装 minikube（推荐）或 kind
+# minikube:
+curl -LO https://storage.googleapis.com/minikube/releases/latest/minikube-linux-amd64
+sudo install minikube-linux-amd64 /usr/local/bin/minikube
+minikube start
+
+# kind (Kubernetes in Docker):
+# 你已经有 Docker，kind 更快
+# curl -Lo ./kind https://kind.sigs.k8s.io/dl/v0.20.0/kind-linux-amd64
+# chmod +x ./kind && sudo mv ./kind /usr/local/bin/kind
+# kind create cluster
+
+# 验证
+kubectl cluster-info
+kubectl get nodes</code></pre>
+
+<h2>动手练习</h2>
+
+<p>如果你有 minikube/kind，跑这个：</p>
+
+<pre><code># 创建 Deployment + Service
+kubectl create deployment nginx --image=nginx:alpine --replicas=3 --port=80
+kubectl expose deployment nginx --type=NodePort --port=80
+
+# 查看
+kubectl get all
+# NAME                         READY   STATUS    RESTARTS   AGE
+# pod/nginx-xxx-xxx            1/1     Running   0          10s
+# pod/nginx-xxx-yyy            1/1     Running   0          10s
+# pod/nginx-xxx-zzz            1/1     Running   0          10s
+# service/nginx   TYPE:NodePort   PORT(S):80:3xxxx/TCP
+
+# 访问
+minikube service nginx --url     # minikube
+# 或 kubectl port-forward svc/nginx 8080:80  # 通用方式
+curl http://localhost:8080</code></pre>
+
+<h2>小测验</h2>
+
+<form id="quiz" onsubmit="return checkQuiz(event)">
+  <fieldset style="border:1px solid var(--border); border-radius:6px; padding:1rem; margin:1rem 0;">
+    <legend style="font-weight:600;">Q1：Pod 和 Deployment 的关系是？</legend>
+    <label><input type="radio" name="q1" value="a"> 没有关系，互相独立</label>
+    <label><input type="radio" name="q1" value="b"> Deployment 管理 Pod 的生命周期，保证副本数量</label>
+    <label><input type="radio" name="q1" value="c"> Pod 管理 Deployment</label>
+    <label><input type="radio" name="q1" value="d"> 一个 Pod 只能属于一个 Deployment</label>
+  </fieldset>
+
+  <fieldset style="border:1px solid var(--border); border-radius:6px; padding:1rem; margin:1rem 0;">
+    <legend style="font-weight:600;">Q2：Service 为什么需要？Pod 不是有 IP 吗？</legend>
+    <label><input type="radio" name="q2" value="a"> Pod IP 是临时的，重建会变；Service 提供固定 IP+DNS</label>
+    <label><input type="radio" name="q2" value="b"> Service 更安全</label>
+    <label><input type="radio" name="q2" value="c"> Pod 没有 IP</label>
+    <label><input type="radio" name="q2" value="d"> 为了兼容老版本 K8s</label>
+  </fieldset>
+
+  <fieldset style="border:1px solid var(--border); border-radius:6px; padding:1rem; margin:1rem 0;">
+    <legend style="font-weight:600;">Q3：滚动更新时如果新版本 Pod 启动失败，K8s 怎么做？</legend>
+    <label><input type="radio" name="q3" value="a"> 立即回滚到旧版本</label>
+    <label><input type="radio" name="q3" value="b"> 停止更新，保留新旧混合状态，旧的继续服务</label>
+    <label><input type="radio" name="q3" value="c"> 删除所有 Pod 重试</label>
+    <label><input type="radio" name="q3" value="d"> 发送告警给运维</label>
+  </fieldset>
+
+  <button type="submit" style="background:var(--accent);color:#fff;border:none;padding:0.6rem 1.5rem;font-size:1rem;border-radius:6px;cursor:pointer;font-family:inherit;">检查答案</button>
+</form>
+
+<div id="quiz-result" style="margin-top:1rem;"></div>
+
+<h2>下一步</h2>
+
+<p><a href="./0015-k8s-networking-config.html">Lesson 0015：K8s 网络与配置 →</a>——Ingress、ConfigMap、Secret、Volume、PVC。</p>
+
+<div class="cite">
+<a href="./0013-networking-practice.html">← Lesson 0013</a> · <a href="./0015-k8s-networking-config.html">Lesson 0015 →</a>
+</div>
+
+<script>
+function checkQuiz(e) {
+  e.preventDefault();
+  const answers = { q1: 'b', q2: 'a', q3: 'b' };
+  let correct = 0, feedback = [];
+  for (const [q, a] of Object.entries(answers)) {
+    const sel = document.querySelector(`input[name="${q}"]:checked`);
+    if (!sel) feedback.push(q + ': 未作答');
+    else if (sel.value === a) { correct++; feedback.push(q + ': ✓ 正确'); }
+    else feedback.push(q + ': ✗ 错误');
+  }
+  const pct = Math.round(correct/3*100);
+  const div = document.getElementById('quiz-result');
+  div.innerHTML = `<div style="background:${pct===100?'var(--success-bg)':'var(--warn-bg)'};color:${pct===100?'var(--success-fg)':'var(--warn-fg)'};padding:0.75rem 1rem;border-radius:6px;">
+    <strong>得分：${correct}/3 (${pct}%)</strong><br>${feedback.join('<br>')}
+  </div>`;
+}
+</script>
+
+</body>
+</html>

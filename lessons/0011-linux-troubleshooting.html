@@ -1,0 +1,228 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Lesson 0011 — Linux 排错实战</title>
+<link rel="stylesheet" href="../assets/style.css">
+</head>
+<body>
+
+<h1>Lesson 0011：Linux 排错——出问题了，怎么找根因？</h1>
+
+<p><a href="./0010-linux-admin.html">← Lesson 0010</a> 教你管服务器。这一课教你<strong>服务器出问题时怎么排查</strong>——这是 DevOps 最值钱的能力。</p>
+
+<h2>排错方法论：从外到内，逐层深入</h2>
+
+<pre><code>用户说「网站打不开了」
+  → 1. 网络层：能 ping 通吗？端口开着吗？DNS 解析正常吗？
+  → 2. 系统层：磁盘满了吗？内存够吗？CPU 打满了吗？
+  → 3. 进程层：服务在跑吗？端口在监听吗？
+  → 4. 应用层：日志有什么错误？</code></pre>
+
+<h2>工具一：lsof——一切皆文件，一切都能列出来</h2>
+
+<pre><code># lsof = List Open Files
+lsof -i :80                 # 谁在用 80 端口？
+lsof -p 1234                # PID 1234 打开了哪些文件？
+lsof /var/log/syslog        # 谁在写这个文件？
+lsof -u deployer            # deployer 用户打开了啥？
+lsof +D /opt/myapp          # 这个目录下的文件被哪些进程打开了？
+
+# 经典场景：磁盘满了但 du 找不到是哪个文件
+# 原因：进程还持有已删除文件的句柄
+lsof | grep deleted         # 找到这些「幽灵文件」
+# 重启那个进程就释放了</code></pre>
+
+<h2>工具二：strace——看进程在做什么系统调用</h2>
+
+<pre><code># 追踪一个运行中的进程
+sudo strace -p 1234 -f -e trace=network   # 只看网络相关调用
+
+# 启动时追踪
+strace -o /tmp/trace.log node server.js   # 输出到文件
+
+# 常用过滤
+strace -e trace=file node server.js       # 只看文件操作
+strace -e trace=open,read,write -p 1234   # 只看 open/read/write
+strace -c -p 1234                          # 统计，Ctrl+C 后看汇总
+
+# 经典场景：程序报 "No such file"，但你看文件确实在
+# → strace 会告诉你它实际在找哪个路径（可能是相对路径搞错了）</code></pre>
+
+<div class="note">
+<strong>strace 有性能开销</strong>——每个系统调用都要拦截。生产环境慎用，先在测试环境复现。如果必须在线排查，用 <code>-e trace=...</code> 缩小范围。
+</div>
+
+<h2>工具三：tcpdump——抓包看网络</h2>
+
+<pre><code># 抓 80 端口的流量
+sudo tcpdump -i any port 80 -A    # -A = ASCII 输出（能看 HTTP 内容）
+
+# 只看特定主机
+sudo tcpdump -i eth0 host 10.0.0.5
+
+# 保存到文件
+sudo tcpdump -i any -w capture.pcap
+# 之后用 Wireshark 打开分析
+
+# 经典场景：怀疑 DNS 有问题
+sudo tcpdump -i any port 53
+# 看看 DNS 请求发出去了吗？响应回来了吗？</code></pre>
+
+<h2>工具四：性能分析套件</h2>
+
+<pre><code># CPU
+top                         # 实时看谁在用 CPU
+htop                        # 更好看
+mpstat -P ALL 1             # 每个核心的 CPU 使用率
+
+# 内存
+free -h                     # 内存概览
+cat /proc/meminfo            # 详细内存信息
+# OOM Killer 日志
+dmesg | grep -i "out of memory"
+grep -i "out of memory" /var/log/syslog
+
+# 磁盘 I/O
+iostat -x 1                 # 磁盘读写速率和等待时间
+iotop                       # 哪个进程在狂读写磁盘
+
+# 综合
+vmstat 1                    # CPU + 内存 + I/O 一览
+sar -n DEV 1                # 网络接口流量（需 sysstat 包）</code></pre>
+
+<h2>经典故障场景</h2>
+
+<h3>场景 1：「磁盘满了」</h3>
+
+<pre><code>df -h                       # 确认哪个分区满了
+du -sh /* | sort -rh | head -10  # 哪个目录最大
+# 如果 du 加起来远小于 df 显示的使用量
+lsof | grep deleted         # 找被删除但未释放的文件
+# → 重启持有文件句柄的进程</code></pre>
+
+<h3>场景 2：「内存不足」</h3>
+
+<pre><code>free -h                     # 看整体
+ps aux --sort=-%mem | head -10  # 谁在吃内存
+dmesg | tail -50            # 有没有 OOM killer 日志
+# 如果 free 显示 available 很少但 cached 很大
+# → 这是正常的！Linux 用空闲内存做缓存，需要时会释放</code></pre>
+
+<h3>场景 3：「服务端口被占」</h3>
+
+<pre><code># Cannot bind to :3000
+ss -tlnp | grep 3000        # 谁在监听 3000？
+sudo lsof -i :3000          # 更详细的信息
+# 如果是僵尸进程：ps aux | grep PID → kill</code></pre>
+
+<h3>场景 4：「进程莫名死掉」</h3>
+
+<pre><code># 检查退出码
+echo $?                     # 上一个命令的退出码
+
+# systemd 服务的退出信息
+systemctl status myapp
+journalctl -u myapp -n 50 --no-pager
+
+# 检查限制
+ulimit -a                   # 当前 shell 的限制
+cat /proc/PID/limits        # 某个进程的限制
+# 常见：open files 限制太小 → 改 /etc/security/limits.conf</code></pre>
+
+<h3>场景 5：「网站响应慢」</h3>
+
+<pre><code># 用 curl 测量各阶段耗时
+curl -w "@curl-format.txt" -o /dev/null -s https://example.com
+
+# curl-format.txt 内容：
+# time_namelookup:  %{time_namelookup}\n    # DNS 解析
+# time_connect:     %{time_connect}\n       # TCP 连接
+# time_appconnect:  %{time_appconnect}\n    # SSL/TLS 握手
+# time_starttransfer: %{time_starttransfer}\n  # 第一个字节
+# time_total:       %{time_total}\n         # 总耗时
+
+# 如果 time_namelookup 高 → DNS 慢
+# 如果 time_connect 高 → 网络延迟
+# 如果 time_starttransfer 高 → 应用处理慢</code></pre>
+
+<h2>动手练习</h2>
+
+<p>用 Docker 创建一个「故障容器」来练习排查：</p>
+
+<pre><code>docker run -d --name troubleshoot ubuntu:22.04 sleep infinity
+
+# 进去制造并排查问题
+docker exec -it troubleshoot bash
+
+# 1. 装一些工具
+apt update && apt install -y procps lsof net-tools iproute2 curl
+
+# 2. 练习 lsof：写一个脚本，用 lsof 找出哪个进程在写 /tmp/test.log
+# 3. 练习 ss：启动一个 nc 监听 9999 端口，用 ss 找到它
+# 4. 练习 curl 计时：curl -w "...各阶段耗时..." 访问 github.com
+
+docker rm -f troubleshoot</code></pre>
+
+<h2>小测验</h2>
+
+<form id="quiz" onsubmit="return checkQuiz(event)">
+  <fieldset style="border:1px solid var(--border); border-radius:6px; padding:1rem; margin:1rem 0;">
+    <legend style="font-weight:600;">Q1：磁盘满了，但 <code>du</code> 加起来远小于 <code>df</code> 显示，最可能的原因？</legend>
+    <label><input type="radio" name="q1" value="a"> du 命令有 bug</label>
+    <label><input type="radio" name="q1" value="b"> 有进程持有已删除文件的句柄，空间没释放</label>
+    <label><input type="radio" name="q1" value="c"> 磁盘有坏道</label>
+    <label><input type="radio" name="q1" value="d"> 需要重启服务器才能更新</label>
+  </fieldset>
+
+  <fieldset style="border:1px solid var(--border); border-radius:6px; padding:1rem; margin:1rem 0;">
+    <legend style="font-weight:600;">Q2：想知道哪个进程在监听 3000 端口，最佳命令是？</legend>
+    <label><input type="radio" name="q2" value="a"><code> netstat | grep 3000</code></label>
+    <label><input type="radio" name="q2" value="b"><code> ss -tlnp | grep 3000</code></label>
+    <label><input type="radio" name="q2" value="c"><code> ifconfig 3000</code></label>
+    <label><input type="radio" name="q2" value="d"><code> ping :3000</code></label>
+  </fieldset>
+
+  <fieldset style="border:1px solid var(--border); border-radius:6px; padding:1rem; margin:1rem 0;">
+    <legend style="font-weight:600;">Q3：curl 测量中发现 time_namelookup 很高，说明什么问题？</legend>
+    <label><input type="radio" name="q3" value="a"> 服务器处理慢</label>
+    <label><input type="radio" name="q3" value="b"> DNS 解析慢</label>
+    <label><input type="radio" name="q3" value="c"> 网络带宽不够</label>
+    <label><input type="radio" name="q3" value="d"> SSL 证书过期</label>
+  </fieldset>
+
+  <button type="submit" style="background:var(--accent);color:#fff;border:none;padding:0.6rem 1.5rem;font-size:1rem;border-radius:6px;cursor:pointer;font-family:inherit;">检查答案</button>
+</form>
+
+<div id="quiz-result" style="margin-top:1rem;"></div>
+
+<h2>下一步</h2>
+
+<p><a href="./0012-networking-basics.html">Lesson 0012：网络协议基础 →</a>——TCP 三次握手为什么是三次？DNS 解析到底走了几步？TLS 证书链怎么验证？面试必问。</p>
+
+<div class="cite">
+<a href="./0010-linux-admin.html">← Lesson 0010</a> · <a href="./0012-networking-basics.html">Lesson 0012 →</a> · <a href="../reference/glossary.html">术语表</a>
+</div>
+
+<script>
+function checkQuiz(e) {
+  e.preventDefault();
+  const answers = { q1: 'b', q2: 'b', q3: 'b' };
+  let correct = 0, feedback = [];
+  for (const [q, a] of Object.entries(answers)) {
+    const sel = document.querySelector(`input[name="${q}"]:checked`);
+    if (!sel) feedback.push(q + ': 未作答');
+    else if (sel.value === a) { correct++; feedback.push(q + ': ✓ 正确'); }
+    else feedback.push(q + ': ✗ 错误');
+  }
+  const pct = Math.round(correct/3*100);
+  const div = document.getElementById('quiz-result');
+  div.innerHTML = `<div style="background:${pct===100?'var(--success-bg)':'var(--warn-bg)'};color:${pct===100?'var(--success-fg)':'var(--warn-fg)'};padding:0.75rem 1rem;border-radius:6px;">
+    <strong>得分：${correct}/3 (${pct}%)</strong><br>${feedback.join('<br>')}
+  </div>`;
+}
+</script>
+
+</body>
+</html>

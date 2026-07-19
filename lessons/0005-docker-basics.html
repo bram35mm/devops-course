@@ -1,0 +1,285 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Lesson 0005 — Docker：告别「在我机器上能跑」</title>
+<link rel="stylesheet" href="../assets/style.css">
+</head>
+<body>
+
+<h1>Lesson 0005：Docker——把你的应用装进集装箱</h1>
+
+<p>这是 DevOps 四大支柱的第一根：<strong>容器化</strong>。学完这节课，你能把任何项目打包成一个在任何机器上都能跑的 Docker 镜像。</p>
+
+<h2>为什么需要 Docker？</h2>
+
+<p>你肯定经历过：项目在你电脑上跑得好好的，换个环境就炸了——Node 版本不对、系统库缺失、环境变量忘配。Docker 解决这个问题的方式很简单：</p>
+
+<blockquote>
+<p><strong>把应用和它的全部依赖（OS 库、运行时、配置）打包在一起，变成一个「集装箱」。</strong> 这个集装箱在任何装了 Docker 的机器上跑，结果一模一样。</p>
+</blockquote>
+
+<p>跟你熟悉的 npm 类比：<code>package.json</code> 锁定了 JS 依赖 → Docker 镜像锁定了<strong>一切</strong>依赖，包括操作系统级别的。</p>
+
+<h2>三个核心概念</h2>
+
+<table>
+  <tr><th>概念</th><th>类比</th><th>是什么</th></tr>
+  <tr>
+    <td><strong>Dockerfile</strong></td>
+    <td>食谱 / package.json</td>
+    <td>一个文本文件，定义如何构建镜像。列出每一步操作。</td>
+  </tr>
+  <tr>
+    <td><strong>Image（镜像）</strong></td>
+    <td>类 (class) / 模板</td>
+    <td>Dockerfile 构建出来的只读模板。包含完整文件系统。</td>
+  </tr>
+  <tr>
+    <td><strong>Container（容器）</strong></td>
+    <td>实例 (instance) / 进程</td>
+    <td>镜像的运行实例。一个镜像可以启动多个容器。</td>
+  </tr>
+</table>
+
+<pre><code>Dockerfile ──(build)──► Image ──(run)──► Container</code></pre>
+
+<h2>第一部分：写你的第一个 Dockerfile（15 分钟）</h2>
+
+<p>以你的 <code>~/code/podcast</code>（Astro 项目）为例。这个项目的构建流程是：</p>
+
+<pre><code>npm install  →  npm run build  →  启动静态文件服务器</code></pre>
+
+<p>翻译成 Dockerfile：</p>
+
+<pre><code># === Stage 1: Build（构建阶段）===
+FROM node:22-alpine AS builder        # 以 Node.js 22 Alpine 为基础镜像
+WORKDIR /app                           # 设工作目录（没有就自动创建）
+COPY package*.json ./                  # 先复制依赖清单（利用缓存）
+RUN npm ci                             # 安装依赖（ci = 按 lock 文件精确安装）
+COPY . .                               # 复制其余源代码
+RUN npm run build                      # 构建
+
+# === Stage 2: Run（运行阶段）===
+FROM node:22-alpine AS runner          # 换一个干净镜像（不要构建工具）
+WORKDIR /app
+COPY --from=builder /app/dist ./dist   # 只从构建阶段复制产物
+COPY --from=builder /app/node_modules ./node_modules
+EXPOSE 4321                            # 声明端口（文档作用，不实际开放）
+CMD ["node", "dist/server/entry.mjs"]  # 启动命令</code></pre>
+
+<p>逐行解释：</p>
+
+<table>
+  <tr><th>指令</th><th>作用</th><th>为什么这样写</th></tr>
+  <tr><td><code>FROM node:22-alpine</code></td><td>指定基础镜像</td><td>Alpine = 最小 Linux（~5MB），够用且安全</td></tr>
+  <tr><td><code>WORKDIR /app</code></td><td>设置工作目录</td><td>后续命令都在这个目录下执行</td></tr>
+  <tr><td><code>COPY pkg*.json ./</code></td><td><strong>先</strong>复制依赖清单</td><td>关键优化：只有 package.json 变了才重新 npm ci。代码变了不影响这层缓存</td></tr>
+  <tr><td><code>RUN npm ci</code></td><td>运行命令</td><td><code>npm ci</code> 比 <code>npm install</code> 更快更严格</td></tr>
+  <tr><td><code>COPY . .</code></td><td>复制源代码</td><td><strong>后</strong>复制，这样日常改代码时只重建这层</td></tr>
+  <tr><td><code>--from=builder</code></td><td>多阶段构建</td><td>最终镜像只含运行时需要的东西，不包含 npm、构建工具等垃圾</td></tr>
+  <tr><td><code>EXPOSE 4321</code></td><td>声明端口</td><td>文档性质的，实际端口映射在 <code>docker run -p</code> 时指定</td></tr>
+  <tr><td><code>CMD [...]</code></td><td>容器启动时执行的命令</td><td>JSON 数组格式（exec form），推荐用这个</td></tr>
+</table>
+
+<div class="tip">
+<strong>为什么 COPY 要分两步？</strong>Docker 构建是分层缓存的。每一行指令生成一层。如果 <code>COPY . .</code> 在前面，你每次改一行代码，整层缓存都失效，后面 <code>RUN npm ci</code> 还得重跑。把 <code>COPY package*.json</code> 提前，依赖层就缓存住了——除非你改了 package.json。
+</div>
+
+<h2>第二部分：8 个核心命令（10 分钟）</h2>
+
+<p>打开终端，跟着敲。</p>
+
+<pre><code># 1. 构建镜像
+docker build -t my-app:latest .        # -t = 名字:标签  . = Dockerfile 所在目录
+
+# 2. 查看本地镜像
+docker images                           # 列出所有本地镜像
+
+# 3. 运行容器
+docker run -d -p 8080:4321 --name my-app my-app:latest
+#          ↑  ↑           ↑              ↑
+#      后台跑 端口映射    容器名         镜像名
+#      宿主:容器
+
+# 4. 查看运行中的容器
+docker ps                               # 运行中的
+docker ps -a                            # 包括已停止的
+
+# 5. 查看日志
+docker logs my-app                      # 一次性输出
+docker logs -f my-app                   # 实时追踪（Ctrl+C 退出）
+
+# 6. 进入容器内部
+docker exec -it my-app sh               # -it = 交互式终端  sh = shell
+
+# 7. 停止 / 启动 / 删除
+docker stop my-app                      # 停止
+docker start my-app                     # 重新启动
+docker rm my-app                        # 删除容器（先 stop）
+docker rm -f my-app                     # 强制删除（stop + rm）
+
+# 8. 清理
+docker system prune -a                  # 删除所有未使用的镜像/容器/网络
+# ⚠️ 这条会清掉很多东西，确认后再跑</code></pre>
+
+<h2>第三部分：Docker Compose——管理多容器应用</h2>
+
+<p>真实项目很少只有一个容器。比如你的应用可能需要 Node.js + PostgreSQL + Redis。手动 <code>docker run</code> 三个容器再连网络太痛苦了。Docker Compose 用一个 YAML 文件定义所有服务。</p>
+
+<pre><code># docker-compose.yml
+services:
+  app:
+    build: .                       # 用当前目录的 Dockerfile 构建
+    ports:
+      - "4321:4321"
+    environment:
+      - DATABASE_URL=postgres://db:5432/myapp    # db = 下面的服务名，自动 DNS
+    depends_on:
+      - db
+
+  db:
+    image: postgres:16-alpine      # 直接用官方镜像，不需要自己写 Dockerfile
+    environment:
+      - POSTGRES_PASSWORD=secret
+    volumes:
+      - pgdata:/var/lib/postgresql/data   # 持久化数据（否则容器删了数据就没了）
+
+volumes:
+  pgdata:                          # 声明一个命名卷</code></pre>
+
+<p>启动：<code>docker compose up -d</code>。停止：<code>docker compose down</code>。</p>
+
+<h2>动手练习：Docker 化一个 Node.js 应用</h2>
+
+<p><strong>任务：</strong>创建一个最小的 Node.js HTTP 服务，写 Dockerfile，构建并运行。</p>
+
+<pre><code># 1. 创建项目
+mkdir /tmp/docker-demo && cd /tmp/docker-demo
+
+# 2. 创建 server.js
+cat > server.js << 'EOF'
+const http = require('http');
+const server = http.createServer((req, res) => {
+  res.writeHead(200, { 'Content-Type': 'text/plain' });
+  res.end('Hello from Docker!\n');
+});
+server.listen(3000, () => console.log('Listening on :3000'));
+EOF
+
+# 3. 创建 package.json（极简版）
+echo '{"name":"docker-demo","private":true}' > package.json
+
+# 4. 创建 Dockerfile
+cat > Dockerfile << 'EOF'
+FROM node:22-alpine
+WORKDIR /app
+COPY package.json ./
+COPY server.js ./
+EXPOSE 3000
+CMD ["node", "server.js"]
+EOF
+
+# 5. 构建并运行
+docker build -t docker-demo .
+docker run -d -p 3000:3000 --name demo docker-demo
+
+# 6. 验证
+curl http://localhost:3000
+# 输出: Hello from Docker!
+
+# 7. 进容器看看
+docker exec -it demo sh
+  # 现在你在容器里！ls 看看，只有 package.json 和 server.js
+  # exit 退出
+
+# 8. 清理
+docker rm -f demo</code></pre>
+
+<div class="tip">
+如果 3000 端口被占用了，换一个：<code>-p 3456:3000</code>，然后 <code>curl http://localhost:3456</code>。
+</div>
+
+<h2>小测验</h2>
+
+<form id="quiz" onsubmit="return checkQuiz(event)">
+  <fieldset style="border:1px solid var(--border); border-radius:6px; padding:1rem; margin:1rem 0;">
+    <legend style="font-weight:600;">Q1：Dockerfile → Image → Container 的关系是什么？</legend>
+    <label><input type="radio" name="q1" value="a"> Dockerfile 是运行中的实例，Image 是源码</label>
+    <label><input type="radio" name="q1" value="b"> Dockerfile 定义构建规则 → build 产出 Image → run Image 产生 Container</label>
+    <label><input type="radio" name="q1" value="c"> Container 是模板，Image 是运行实例</label>
+    <label><input type="radio" name="q1" value="d"> 三者互相独立，没有关系</label>
+  </fieldset>
+
+  <fieldset style="border:1px solid var(--border); border-radius:6px; padding:1rem; margin:1rem 0;">
+    <legend style="font-weight:600;">Q2：为什么要把 <code>COPY package*.json</code> 放在 <code>COPY . .</code> 前面？</legend>
+    <label><input type="radio" name="q2" value="a"> 习惯而已，顺序无所谓</label>
+    <label><input type="radio" name="q2" value="b"> package.json 文件更小，复制更快</label>
+    <label><input type="radio" name="q2" value="c"> 利用 Docker 分层缓存：代码变了但依赖没变时，不用重新安装依赖</label>
+    <label><input type="radio" name="q2" value="d"> npm 要求 package.json 必须在源代码之前</label>
+  </fieldset>
+
+  <fieldset style="border:1px solid var(--border); border-radius:6px; padding:1rem; margin:1rem 0;">
+    <legend style="font-weight:600;">Q3：要进入一个运行中容器的 Shell，用什么命令？</legend>
+    <label><input type="radio" name="q3" value="a"><code> docker ssh my-app</code></label>
+    <label><input type="radio" name="q3" value="b"><code> docker enter my-app</code></label>
+    <label><input type="radio" name="q3" value="c"><code> docker exec -it my-app sh</code></label>
+    <label><input type="radio" name="q3" value="d"><code> docker attach my-app</code></label>
+  </fieldset>
+
+  <fieldset style="border:1px solid var(--border); border-radius:6px; padding:1rem; margin:1rem 0;">
+    <legend style="font-weight:600;">Q4：多阶段构建（multi-stage build）的主要目的是什么？</legend>
+    <label><input type="radio" name="q4" value="a"> 让 Dockerfile 看起来更专业</label>
+    <label><input type="radio" name="q4" value="b"> 加速构建（并行跑多个 FROM）</label>
+    <label><input type="radio" name="q4" value="c"> 减小最终镜像体积：构建工具留在第一阶段，最终镜像只含运行时需要的文件</label>
+    <label><input type="radio" name="q4" value="d"> 同时构建多个不同应用</label>
+  </fieldset>
+
+  <button type="submit" style="background:var(--accent);color:#fff;border:none;padding:0.6rem 1.5rem;font-size:1rem;border-radius:6px;cursor:pointer;font-family:inherit;">检查答案</button>
+</form>
+
+<div id="quiz-result" style="margin-top:1rem;"></div>
+
+<h2>推荐资源</h2>
+<ul>
+  <li><a href="https://docs.docker.com/get-started/" target="_blank">Docker 官方 Get Started</a> — 最权威的入门教程，有交互式演练</li>
+  <li><a href="https://docs.docker.com/build/building/best-practices/" target="_blank">Docker 官方最佳实践</a> — 如何写生产级 Dockerfile（多阶段构建、非 root 用户、健康检查）</li>
+  <li><a href="https://github.com/docker/labs" target="_blank">Docker Labs (GitHub)</a> — 官方动手实验仓库，包含初学者到高级的多个实验</li>
+  <li><strong>本地跑 <code>docker run -d -p 80:80 docker/getting-started</code></strong> 然后打开 <code>http://localhost</code> — Docker 官方自带的交互教程</li>
+</ul>
+
+<h2>下一步</h2>
+
+<p>下一课我们学习 <strong>CI/CD 基础——GitHub Actions</strong>。你将学会：每次 push 代码，自动构建 Docker 镜像、跑测试、部署。这是 DevOps 最核心的自动化实践。</p>
+
+<div class="note">
+构建失败？把报错贴给我。最常见的坑是端口冲突和 COPY 路径写错。记住 <code>docker logs 容器名</code> 是你的第一排查工具。
+</div>
+
+<div class="cite">
+<a href="./0004-shell-scripting.html">← Lesson 0004</a> · <a href="../reference/glossary.html">术语表</a> · <a href="../MISSION.md">Mission</a>
+</div>
+
+<script>
+function checkQuiz(e) {
+  e.preventDefault();
+  const answers = { q1: 'b', q2: 'c', q3: 'c', q4: 'c' };
+  let correct = 0, feedback = [];
+  for (const [q, a] of Object.entries(answers)) {
+    const sel = document.querySelector(`input[name="${q}"]:checked`);
+    if (!sel) feedback.push(q + ': 未作答');
+    else if (sel.value === a) { correct++; feedback.push(q + ': ✓ 正确'); }
+    else feedback.push(q + ': ✗ 错误');
+  }
+  const pct = Math.round(correct/4*100);
+  const div = document.getElementById('quiz-result');
+  div.innerHTML = `<div style="background:${pct===100?'var(--success-bg)':'var(--warn-bg)'};color:${pct===100?'var(--success-fg)':'var(--warn-fg)'};padding:0.75rem 1rem;border-radius:6px;">
+    <strong>得分：${correct}/4 (${pct}%)</strong><br>${feedback.join('<br>')}
+    ${pct===100?'<br>🎉 全对！Docker 核心概念已掌握。':''}
+  </div>`;
+}
+</script>
+
+</body>
+</html>

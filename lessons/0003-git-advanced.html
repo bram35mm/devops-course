@@ -1,0 +1,258 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Lesson 0003 — Git 进阶：DevOps 的 Git 不是你用的 Git</title>
+<link rel="stylesheet" href="../assets/style.css">
+</head>
+<body>
+
+<h1>Lesson 0003：Git 进阶——不只是 commit & push</h1>
+
+<p>你已经在用 <code>git add</code>、<code>git commit</code>、<code>git push</code>、<code>git pull</code>。这是开发者的 Git。DevOps 工程师用的是<strong>另一套 Git</strong>——用于自动化、排查、救火和代码考古。</p>
+
+<p>这节课讲 6 个你面试会被问到、工作中会救命的高级操作。</p>
+
+<h2>1. git log —— 代码考古学</h2>
+
+<p>默认的 <code>git log</code> 输出太啰嗦。DevOps 的标准配方：</p>
+
+<pre><code># 一行一个 commit，带图形化分支
+git log --oneline --graph --all
+
+# 只看最近 10 条
+git log --oneline -10
+
+# 找特定人的 commit
+git log --oneline --author="bram35mm"
+
+# 找特定时间段的
+git log --oneline --since="2026-07-01" --until="2026-07-15"
+
+# 找改过某个字符串的 commit（比如找谁动了 API_URL）
+git log -S "API_URL" --oneline
+
+# 看某个文件的变更历史
+git log --oneline -- package.json</code></pre>
+
+<div class="tip">
+在 <code>~/.gitconfig</code> 里加个 alias：<code>git lg = log --oneline --graph --all</code>，以后打 <code>git lg</code> 就行。
+</div>
+
+<h2>2. git stash —— 临时保存现场</h2>
+
+<p>场景：你在 feature 分支改了一半，突然线上出 bug 需要切回 main 修。但你不想 commit 半成品。</p>
+
+<pre><code>git stash                    # 把当前改动「藏起来」，工作区恢复干净
+git stash list               # 查看所有 stash
+git stash pop                # 恢复最近一次 stash 并删除它
+git stash apply stash@{1}    # 恢复指定 stash，不删除
+git stash drop stash@{1}     # 删除指定 stash
+git stash save "WIP: login"  # 带备注 stash</code></pre>
+
+<p>DevOps 场景：你在改 CI 配置，突然需要切回去修 pipeline。stash → 切分支 → 修完 → stash pop。</p>
+
+<h2>3. git rebase —— 重写历史</h2>
+
+<p>这是面试最爱问的。rebase 和 merge 都能合并分支，但结果不同：</p>
+
+<pre><code># merge：产生一个额外的 merge commit，历史是「网状的」
+# rebase：把你的 commit 「搬到」目标分支最新 commit 之后，历史是「线性的」</code></pre>
+
+<p><strong>交互式 rebase（最强大）：</strong></p>
+
+<pre><code>git rebase -i HEAD~4    # 对最近 4 个 commit 进行交互式操作</code></pre>
+
+<p>会打开编辑器，列出最近 4 个 commit，每行前面有一个命令：</p>
+
+<table>
+  <tr><th>命令</th><th>效果</th><th>什么时候用</th></tr>
+  <tr><td><code>pick</code></td><td>保留这个 commit</td><td>默认</td></tr>
+  <tr><td><code>squash</code></td><td>合并到上一个 commit，保留 commit message</td><td>把「fix typo」合并进主 commit</td></tr>
+  <tr><td><code>fixup</code></td><td>合并到上一个 commit，<strong>丢弃</strong> commit message</td><td>同上但不需要保留 message</td></tr>
+  <tr><td><code>reword</code></td><td>只改 commit message</td><td>message 写错了</td></tr>
+  <tr><td><code>drop</code></td><td>删除这个 commit</td><td>不小心提交了敏感信息</td></tr>
+</table>
+
+<div class="note">
+<strong>⚠️ 黄金法则：不要 rebase 已经 push 到共享分支的 commit。</strong> rebase 会改变 commit hash，别人的本地分支会炸。只 rebase 你自己的、还没 push 的 commit。
+</div>
+
+<h2>4. git cherry-pick —— 摘樱桃</h2>
+
+<p>把某个 commit 的改动「复制」到当前分支。不合并整个分支，只要一个 commit。</p>
+
+<pre><code>git cherry-pick abc1234    # 把 commit abc1234 的改动应用到当前分支</code></pre>
+
+<p>DevOps 场景：你在 release 分支上，只需要 hotfix 分支里的一个 commit，不需要整个 hotfix 分支。</p>
+
+<h2>5. git bisect —— 二分法找 bug</h2>
+
+<p>场景：3 天前的版本没问题，现在的版本有问题。中间有 50 个 commit。谁引入的？</p>
+
+<pre><code>git bisect start              # 开始二分搜索
+git bisect bad HEAD           # 标记当前版本是坏的
+git bisect good abc1234       # 标记 3 天前的版本是好的
+
+# Git 会自动 checkout 到中间一个 commit
+# 你测试一下 → 如果是好的就 git bisect good
+#             → 如果是坏的就 git bisect bad
+# 重复几次后 Git 找到第一个坏的 commit
+
+git bisect reset              # 结束搜索，回到原地</code></pre>
+
+<p>50 个 commit 只需要大约 log₂(50) ≈ 6 次测试就能定位。这是 DevOps 排查线上问题的神器。</p>
+
+<h2>6. git reflog —— 后悔药</h2>
+
+<p>你做了 <code>git reset --hard</code>，删掉了 3 天的代码。panic？不用。</p>
+
+<pre><code>git reflog            # 显示 HEAD 的所有移动历史（包括「丢失」的 commit）
+git reset --hard HEAD@{3}   # 回到 3 步之前的状态</code></pre>
+
+<p><code>reflog</code> 是本地 Git 的「操作日志」，记录了每一次 HEAD 变动。只要 commit 过，就永远能找到（默认保留 90 天）。</p>
+
+<h2>7. Git Hooks —— CI/CD 的入口</h2>
+
+<p>Git Hook 是在特定 Git 事件发生时自动执行的脚本。它们存在 <code>.git/hooks/</code> 下（每个 repo 一份）。</p>
+
+<table>
+  <tr><th>Hook</th><th>触发时机</th><th>DevOps 用途</th></tr>
+  <tr><td><code>pre-commit</code></td><td>commit 之前</td><td>跑 lint、格式化、检查密码泄漏</td></tr>
+  <tr><td><code>commit-msg</code></td><td>编辑完 commit message 后</td><td>检查 message 格式（如 Conventional Commits）</td></tr>
+  <tr><td><code>pre-push</code></td><td>push 之前</td><td>跑测试，不通过则阻止 push</td></tr>
+  <tr><td><code>post-receive</code></td><td>服务端收到 push 后</td><td><strong>触发 CI/CD 流水线！</strong></td></tr>
+</table>
+
+<pre><code># 快速试一下 pre-commit hook
+cd /tmp && mkdir hook-demo && cd hook-demo && git init
+cat > .git/hooks/pre-commit << 'EOF'
+#!/bin/bash
+echo "🔍 Running pre-commit checks..."
+# 检查是否有 console.log 残留
+if git diff --cached | grep -q "console\.log"; then
+  echo "❌ Found console.log! Remove it before committing."
+  exit 1
+fi
+echo "✅ All checks passed!"
+EOF
+chmod +x .git/hooks/pre-commit
+
+# 测试
+echo "console.log('test')" > app.js
+git add app.js
+git commit -m "test"    # 会被 hook 拦截！</code></pre>
+
+<div class="tip">
+实际项目中不会手写 hook 脚本，而是用工具管理：<a href="https://pre-commit.com/" target="_blank">pre-commit</a>（Python 生态）或 <a href="https://github.com/typicode/husky" target="_blank">husky</a>（Node 生态，你可能已经在用了）。
+</div>
+
+<h2>动手练习</h2>
+
+<p>在你的终端里建一个临时仓库来练习（不会影响任何项目）：</p>
+
+<pre><code>cd /tmp && rm -rf git-practice && mkdir git-practice && cd git-practice
+git init
+
+# 创建 5 个 commit 来模拟真实开发
+echo "v1" > file.txt && git add . && git commit -m "init"
+echo "v2" >> file.txt && git add . && git commit -m "feat: add v2"
+echo "v3" >> file.txt && git add . && git commit -m "fix: typo"
+echo "v4" >> file.txt && git add . && git commit -m "wip"
+echo "v5" >> file.txt && git add . && git commit -m "feat: add v5"
+
+# 1. 用 git log --oneline 看历史
+# 2. 用 git rebase -i HEAD~4 把后 4 个 commit 压缩成 1 个
+#    → 保留第一个 "init"，其余改成 squash 或 fixup
+# 3. 用 git log --oneline 确认只有 2 个 commit 了
+# 4. 用 git reflog 看被你「压缩掉」的原始 commit 还在
+</code></pre>
+
+<h2>小测验</h2>
+
+<form id="quiz" onsubmit="return checkQuiz(event)">
+  <fieldset style="border:1px solid var(--border); border-radius:6px; padding:1rem; margin:1rem 0;">
+    <legend style="font-weight:600;">Q1：你做了 <code>git reset --hard</code> 误删了代码。哪个命令能救回来？</legend>
+    <label><input type="radio" name="q1" value="a"><code> git log</code></label>
+    <label><input type="radio" name="q1" value="b"><code> git reflog</code></label>
+    <label><input type="radio" name="q1" value="c"><code> git stash pop</code></label>
+    <label><input type="radio" name="q1" value="d"><code> git cherry-pick</code></label>
+  </fieldset>
+
+  <fieldset style="border:1px solid var(--border); border-radius:6px; padding:1rem; margin:1rem 0;">
+    <legend style="font-weight:600;">Q2：在交互式 rebase 中，要把「fix typo」合并到上一个 commit 且丢弃 message，用哪个命令？</legend>
+    <label><input type="radio" name="q2" value="squash"><code> squash</code></label>
+    <label><input type="radio" name="q2" value="fixup"><code> fixup</code></label>
+    <label><input type="radio" name="q2" value="reword"><code> reword</code></label>
+    <label><input type="radio" name="q2" value="drop"><code> drop</code></label>
+  </fieldset>
+
+  <fieldset style="border:1px solid var(--border); border-radius:6px; padding:1rem; margin:1rem 0;">
+    <legend style="font-weight:600;">Q3：rebase 的黄金法则是什么？</legend>
+    <label><input type="radio" name="q3" value="a"> 永远在 master 分支上 rebase</label>
+    <label><input type="radio" name="q3" value="b"> 不要 rebase 已经 push 到共享分支的 commit</label>
+    <label><input type="radio" name="q3" value="c"> rebase 之前必须先 stash</label>
+    <label><input type="radio" name="q3" value="d"> rebase 只能用于 feature 分支</label>
+  </fieldset>
+
+  <fieldset style="border:1px solid var(--border); border-radius:6px; padding:1rem; margin:1rem 0;">
+    <legend style="font-weight:600;">Q4：服务端收到 push 后自动触发 CI/CD，用什么 hook？</legend>
+    <label><input type="radio" name="q4" value="pre-commit"><code> pre-commit</code></label>
+    <label><input type="radio" name="q4" value="pre-push"><code> pre-push</code></label>
+    <label><input type="radio" name="q4" value="post-receive"><code> post-receive</code></label>
+    <label><input type="radio" name="q4" value="commit-msg"><code> commit-msg</code></label>
+  </fieldset>
+
+  <button type="submit" style="background:var(--accent);color:#fff;border:none;padding:0.6rem 1.5rem;font-size:1rem;border-radius:6px;cursor:pointer;font-family:inherit;">检查答案</button>
+</form>
+
+<div id="quiz-result" style="margin-top:1rem;"></div>
+
+<h2>推荐资源</h2>
+<ul>
+  <li><a href="https://git-scm.com/book/zh/v2" target="_blank">Pro Git（中文版）</a> — Git 圣经。第七章（Git 工具）覆盖了本节全部内容</li>
+  <li><a href="https://ohshitgit.com/" target="_blank">Oh Shit, Git!</a> — 常见 Git 翻车场景及救援方案</li>
+  <li>在你的 <code>~/.gitconfig</code> 加这个 alias，终身受用：
+<pre><code>[alias]
+  lg = log --oneline --graph --all
+  unstage = reset HEAD --
+  undo = reset --soft HEAD~1
+  last = log -1 HEAD</code></pre>
+  </li>
+</ul>
+
+<h2>下一步</h2>
+
+<p>下一课我们进入 <strong>Shell 脚本编程</strong>——把命令行操作变成可重复执行的自动化脚本。这是所有 CI/CD 流水线和自动化运维的基础。</p>
+
+<div class="note">
+Git 操作卡住了？把报错发给我。如果你用 rebase 把自己搞晕了，记住 <code>git rebase --abort</code> 可以安全退出。
+</div>
+
+<div class="cite">
+<a href="./0002-linux-cli-basics.html">← Lesson 0002</a> · <a href="../reference/glossary.html">术语表</a> · <a href="../MISSION.md">Mission</a>
+</div>
+
+<script>
+function checkQuiz(e) {
+  e.preventDefault();
+  const answers = { q1: 'b', q2: 'fixup', q3: 'b', q4: 'post-receive' };
+  let correct = 0, feedback = [];
+  for (const [q, a] of Object.entries(answers)) {
+    const sel = document.querySelector(`input[name="${q}"]:checked`);
+    if (!sel) feedback.push(q + ': 未作答');
+    else if (sel.value === a) { correct++; feedback.push(q + ': ✓ 正确'); }
+    else feedback.push(q + ': ✗ 错误');
+  }
+  const pct = Math.round(correct/4*100);
+  const div = document.getElementById('quiz-result');
+  div.innerHTML = `<div style="background:${pct===100?'var(--success-bg)':'var(--warn-bg)'};color:${pct===100?'var(--success-fg)':'var(--warn-fg)'};padding:0.75rem 1rem;border-radius:6px;">
+    <strong>得分：${correct}/4 (${pct}%)</strong><br>${feedback.join('<br>')}
+    ${pct===100?'<br>🎉 全对！Git 进阶技能已掌握。':''}
+  </div>`;
+}
+</script>
+
+</body>
+</html>

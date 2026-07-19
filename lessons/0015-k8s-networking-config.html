@@ -1,0 +1,243 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Lesson 0015 — K8s 网络与配置</title>
+<link rel="stylesheet" href="../assets/style.css">
+</head>
+<body>
+
+<h1>Lesson 0015：K8s 网络与配置——Ingress、ConfigMap、Secret、Volume</h1>
+
+<p><a href="./0014-k8s-core-concepts.html">← Lesson 0014</a> 讲了 Pod、Deployment、Service。这课解决：「外部怎么访问？」「配置怎么管？」「数据怎么存？」</p>
+
+<h2>1. Ingress——外部流量的入口</h2>
+
+<p>Service 的 NodePort 只在开发环境用。生产用 <strong>Ingress</strong>——相当于 K8s 里的 Nginx 反向代理。</p>
+
+<pre><code># ingress.yaml
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: web-ingress
+spec:
+  rules:
+    - host: example.com                # 域名
+      http:
+        paths:
+          - path: /api
+            pathType: Prefix
+            backend:
+              service:
+                name: api-svc          # 指向 api Service
+                port:
+                  number: 80
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: web-svc          # 指向 web Service
+                port:
+                  number: 80
+  tls:
+    - hosts:
+        - example.com
+      secretName: example-tls          # TLS 证书存在 Secret 里</code></pre>
+
+<p>Ingress 需要 Ingress Controller 才能工作（如 nginx-ingress、traefik）。云 K8s 通常自带。</p>
+
+<h2>2. ConfigMap——非敏感配置</h2>
+
+<pre><code># 从字面量创建
+kubectl create configmap app-config \
+  --from-literal=LOG_LEVEL=debug \
+  --from-literal=API_URL=https://api.example.com
+
+# 从文件创建
+kubectl create configmap nginx-config --from-file=nginx.conf
+
+# 在 Deployment 里使用
+spec:
+  containers:
+    - name: app
+      image: my-app
+      envFrom:
+        - configMapRef:
+            name: app-config           # 所有 key 变成环境变量
+      # 或挂载为文件
+      volumeMounts:
+        - name: nginx-conf
+          mountPath: /etc/nginx/conf.d
+  volumes:
+    - name: nginx-conf
+      configMap:
+        name: nginx-config</code></pre>
+
+<h2>3. Secret——敏感配置</h2>
+
+<pre><code># 创建 Secret（数据要 base64 编码）
+kubectl create secret generic db-secret \
+  --from-literal=DB_PASSWORD=s3cret!
+
+# 或者从文件
+echo -n "s3cret!" | kubectl create secret generic db-secret --from-file=password=/dev/stdin
+
+# 使用方式和 ConfigMap 一样，只是数据在 etcd 里加密存储
+spec:
+  containers:
+    - name: app
+      env:
+        - name: DB_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: db-secret
+              key: password</code></pre>
+
+<div class="note">
+<strong>K8s Secret 默认只是 base64 编码，不是加密！</strong>任何人能看到 Secret YAML 就能解码。生产环境用 Sealed Secrets、External Secrets Operator 或 Vault。
+</div>
+
+<h2>4. Volume & PVC——持久化存储</h2>
+
+<p>Pod 里的文件是临时的。数据库数据需要持久化→用 PersistentVolume (PV) + PersistentVolumeClaim (PVC)。</p>
+
+<pre><code># pvc.yaml —— 申请存储（类似「我要 10GB 的 SSD」）
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: db-pvc
+spec:
+  accessModes:
+    - ReadWriteOnce            # 单个 Pod 读写
+  resources:
+    requests:
+      storage: 10Gi
+  storageClassName: standard   # 云厂商自动创建 PV
+
+---
+# Deployment 中使用 PVC
+spec:
+  containers:
+    - name: postgres
+      image: postgres:16
+      volumeMounts:
+        - name: db-data
+          mountPath: /var/lib/postgresql/data
+  volumes:
+    - name: db-data
+      persistentVolumeClaim:
+        claimName: db-pvc</code></pre>
+
+<h2>5. 资源限制——防止一个 Pod 吃光所有资源</h2>
+
+<pre><code>spec:
+  containers:
+    - name: app
+      image: my-app
+      resources:
+        requests:               # 调度保证（至少分配这么多）
+          memory: "128Mi"
+          cpu: "100m"           # 100 millicores = 0.1 CPU
+        limits:                 # 硬上限（绝对不能超过）
+          memory: "256Mi"       # 超过 → OOMKilled
+          cpu: "500m"           # 超过 → throttled（被限速，不会被杀）</code></pre>
+
+<p><strong>requests vs limits：</strong>requests 决定 Pod 调度到哪个 Node（Node 要有足够资源）。limits 是运行时天花板。</p>
+
+<h2>6. Probes——健康检查</h2>
+
+<pre><code>spec:
+  containers:
+    - name: app
+      image: my-app
+      livenessProbe:               # 「还活着吗？」→ 失败就重启
+        httpGet:
+          path: /healthz
+          port: 3000
+        initialDelaySeconds: 10    # 启动等 10 秒再开始检查
+        periodSeconds: 15          # 每 15 秒检查一次
+        failureThreshold: 3        # 连续失败 3 次才重启
+
+      readinessProbe:              # 「能接流量了吗？」→ 失败就摘除
+        httpGet:
+          path: /ready
+          port: 3000
+        initialDelaySeconds: 5
+        periodSeconds: 10
+
+      startupProbe:                # 启动完成了吗？（启动慢的应用专用）
+        httpGet:
+          path: /startup
+          port: 3000
+        failureThreshold: 30       # 最多等 30×10s=300s
+        periodSeconds: 10</code></pre>
+
+<table>
+  <tr><th>Probe</th><th>作用</th><th>失败后果</th></tr>
+  <tr><td><code>livenessProbe</code></td><td>容器是否还活着</td><td>kubelet 杀掉容器重建</td></tr>
+  <tr><td><code>readinessProbe</code></td><td>容器能否接请求</td><td>从 Service 摘除，不杀</td></tr>
+  <tr><td><code>startupProbe</code></td><td>启动是否完成</td><td>启动期间 disable liveness+readiness</td></tr>
+</table>
+
+<h2>小测验</h2>
+
+<form id="quiz" onsubmit="return checkQuiz(event)">
+  <fieldset style="border:1px solid var(--border); border-radius:6px; padding:1rem; margin:1rem 0;">
+    <legend style="font-weight:600;">Q1：livenessProbe 和 readinessProbe 的关键区别？</legend>
+    <label><input type="radio" name="q1" value="a"> 没有区别</label>
+    <label><input type="radio" name="q1" value="b"> liveness 失败=重启，readiness 失败=摘除流量不重启</label>
+    <label><input type="radio" name="q1" value="c"> readiness 失败=重启，liveness 失败=摘除</label>
+    <label><input type="radio" name="q1" value="d"> liveness 检查 CPU，readiness 检查内存</label>
+  </fieldset>
+
+  <fieldset style="border:1px solid var(--border); border-radius:6px; padding:1rem; margin:1rem 0;">
+    <legend style="font-weight:600;">Q2：ConfigMap 和 Secret 的主要区别？</legend>
+    <label><input type="radio" name="q2" value="a"> 语法不同</label>
+    <label><input type="radio" name="q2" value="b"> Secret 用于敏感数据，base64 编码；ConfigMap 用于普通配置</label>
+    <label><input type="radio" name="q2" value="c"> ConfigMap 只能挂载文件，Secret 只能做环境变量</label>
+    <label><input type="radio" name="q2" value="d"> 没有任何区别</label>
+  </fieldset>
+
+  <fieldset style="border:1px solid var(--border); border-radius:6px; padding:1rem; margin:1rem 0;">
+    <legend style="font-weight:600;">Q3：memory limits 设置 256Mi，容器用到了 300Mi，会发生什么？</legend>
+    <label><input type="radio" name="q3" value="a"> 容器被限速但不被杀</label>
+    <label><input type="radio" name="q3" value="b"> 容器被 OOMKilled，重启</label>
+    <label><input type="radio" name="q3" value="c"> 自动扩容到 300Mi</label>
+    <label><input type="radio" name="q3" value="d"> 什么也不发生</label>
+  </fieldset>
+
+  <button type="submit" style="background:var(--accent);color:#fff;border:none;padding:0.6rem 1.5rem;font-size:1rem;border-radius:6px;cursor:pointer;font-family:inherit;">检查答案</button>
+</form>
+
+<div id="quiz-result" style="margin-top:1rem;"></div>
+
+<h2>下一步</h2>
+
+<p><a href="./0016-k8s-production.html">Lesson 0016：K8s 生产实践 →</a>——Helm、HPA、RBAC、监控集成。Plan A 最后一课。</p>
+
+<div class="cite">
+<a href="./0014-k8s-core-concepts.html">← Lesson 0014</a> · <a href="./0016-k8s-production.html">Lesson 0016 →</a>
+</div>
+
+<script>
+function checkQuiz(e) {
+  e.preventDefault();
+  const answers = { q1: 'b', q2: 'b', q3: 'b' };
+  let correct = 0, feedback = [];
+  for (const [q, a] of Object.entries(answers)) {
+    const sel = document.querySelector(`input[name="${q}"]:checked`);
+    if (!sel) feedback.push(q + ': 未作答');
+    else if (sel.value === a) { correct++; feedback.push(q + ': ✓ 正确'); }
+    else feedback.push(q + ': ✗ 错误');
+  }
+  const pct = Math.round(correct/3*100);
+  const div = document.getElementById('quiz-result');
+  div.innerHTML = `<div style="background:${pct===100?'var(--success-bg)':'var(--warn-bg)'};color:${pct===100?'var(--success-fg)':'var(--warn-fg)'};padding:0.75rem 1rem;border-radius:6px;">
+    <strong>得分：${correct}/3 (${pct}%)</strong><br>${feedback.join('<br>')}
+  </div>`;
+}
+</script>
+
+</body>
+</html>

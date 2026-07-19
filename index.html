@@ -1,0 +1,289 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>DevOps 课程目录</title>
+<link rel="stylesheet" href="assets/style.css">
+<style>
+  .phase { margin: 2rem 0; }
+  .phase h2 { font-size: 1.3rem; border: none; padding: 0; margin-bottom: 0.5rem; }
+  .phase .subtitle { color: var(--muted); font-size: 0.9rem; margin-bottom: 1rem; }
+  .lesson-list { list-style: none; padding: 0; }
+  .lesson-card {
+    display: block;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 1rem 1.25rem;
+    margin: 0.5rem 0;
+    text-decoration: none;
+    color: var(--fg);
+    transition: border-color 0.15s, box-shadow 0.15s;
+  }
+  .lesson-card:hover {
+    border-color: var(--accent);
+    box-shadow: 0 2px 8px rgba(37,99,235,0.1);
+    text-decoration: none;
+  }
+  .lesson-card .num {
+    display: inline-block;
+    background: var(--accent-dim);
+    color: var(--accent);
+    font-weight: 600;
+    font-size: 0.8rem;
+    padding: 0.15em 0.5em;
+    border-radius: 4px;
+    margin-right: 0.6rem;
+    vertical-align: middle;
+    min-width: 2.5em;
+    text-align: center;
+  }
+  .lesson-card .title { font-weight: 600; font-size: 1.05rem; }
+  .lesson-card .desc { color: var(--muted); font-size: 0.85rem; margin-top: 0.25rem; }
+  .lesson-card .prereq { font-size: 0.78rem; color: var(--muted); margin-top: 0.35rem; }
+  .lesson-card .prereq a { color: var(--accent); }
+  .legend { display: flex; gap: 1.5rem; margin: 1rem 0; font-size: 0.85rem; color: var(--muted); flex-wrap: wrap; }
+  .legend span { display: flex; align-items: center; gap: 0.35rem; }
+  .pill {
+    display: inline-block;
+    padding: 0.1em 0.55em;
+    border-radius: 10px;
+    font-size: 0.75rem;
+    font-weight: 500;
+  }
+  .pill-core { background: #dbeafe; color: #1e40af; }
+  .pill-linux { background: #fef3c7; color: #92400e; }
+  .pill-net { background: #d1fae5; color: #065f46; }
+  .pill-k8s { background: #ede9fe; color: #5b21b6; }
+  .flow-chart {
+    background: var(--code-bg);
+    border-radius: 8px;
+    padding: 1.25rem 1.5rem;
+    margin: 1.5rem 0;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 0.78rem;
+    line-height: 1.8;
+    overflow-x: auto;
+    white-space: pre;
+  }
+  .flow-chart .accent { color: var(--accent); font-weight: 500; }
+  .flow-chart .dim { color: var(--muted); }
+</style>
+</head>
+<body>
+
+<h1>DevOps 从零到进阶 &nbsp;—&nbsp; 完整课程目录</h1>
+
+<p>16 节课，3 个阶段，覆盖 DevOps 面试和日常工作的全部基础 + 深入技能。</p>
+
+<div class="legend">
+  <span><span class="pill pill-core">核心</span> 基础体系</span>
+  <span><span class="pill pill-linux">Linux</span> 系统深入</span>
+  <span><span class="pill pill-net">网络</span> 协议与实战</span>
+  <span><span class="pill pill-k8s">K8s</span> 容器编排</span>
+</div>
+
+<!-- ====== 课程依赖关系图 ====== -->
+<h2>学习路径</h2>
+<div class="flow-chart"><span class="dim">阶段一：基础体系（按顺序学）</span>
+<span class="accent">0001</span> 什么是 DevOps
+  │
+<span class="accent">0002</span> Linux 命令行 ───────────────┐
+  │                                │
+<span class="accent">0003</span> Git 进阶                     │
+  │                                │
+<span class="accent">0004</span> Shell 脚本 ──────────────────┤
+  │                                │
+<span class="accent">0005</span> Docker ──────┐               │
+  │                 │              │
+<span class="accent">0006</span> CI/CD ────────┤              │
+  │                 │              │
+<span class="accent">0007</span> 部署实战 ─────┤              │
+  │                 │              │
+<span class="accent">0008</span> IaC ──────────┤              │
+  │                 │              │
+<span class="accent">0009</span> 监控 ─────────┘              │
+  │                                │
+<span class="dim">阶段二：深入进阶（可按需跳学）</span>     │
+<span class="accent">0010</span> Linux 系统管理 ←────────────┘
+  │
+<span class="accent">0011</span> Linux 排错
+  │
+<span class="accent">0012</span> 网络协议基础
+  │
+<span class="accent">0013</span> 网络实战与负载均衡
+  │
+<span class="accent">0014</span> K8s 核心概念 ←─ Docker(0005) + 部署(0007)
+  │
+<span class="accent">0015</span> K8s 网络与配置
+  │
+<span class="accent">0016</span> K8s 生产实践</div>
+
+
+<!-- ====== 阶段一 ====== -->
+<div class="phase">
+<h2>阶段一：核心课程（9 节）—— 广度优先，建立完整体系</h2>
+<p class="subtitle">覆盖 DevOps 四大支柱：容器化、CI/CD、IaC、监控。学完具备初级 DevOps 工程师的知识广度。</p>
+
+<ul class="lesson-list">
+
+<a class="lesson-card" href="lessons/0001-what-is-devops.html">
+  <span class="num pill pill-core">0001</span>
+  <span class="title">什么是 DevOps？</span>
+  <div class="desc">DevOps 解决什么问题、8 阶段无限循环、四大支柱全景。画出你的 DevOps 地图。</div>
+  <div class="prereq">前置：无（第一课）→ 后续：0002</div>
+</a>
+
+<a class="lesson-card" href="lessons/0002-linux-cli-basics.html">
+  <span class="num pill pill-core">0002</span>
+  <span class="title">Linux 命令行基础</span>
+  <div class="desc">12 个核心命令、管道与重定向、权限模型（rwx/755）、systemd、进程管理。附速查表。</div>
+  <div class="prereq">前置：无 → 后续：0004 / 0010</div>
+</a>
+
+<a class="lesson-card" href="lessons/0003-git-advanced.html">
+  <span class="num pill pill-core">0003</span>
+  <span class="title">Git 进阶</span>
+  <div class="desc">rebase 交互式、stash、cherry-pick、bisect 二分法找 bug、reflog 后悔药、Git Hooks。</div>
+  <div class="prereq">前置：会基本的 commit/push → 后续：0006</div>
+</a>
+
+<a class="lesson-card" href="lessons/0004-shell-scripting.html">
+  <span class="num pill pill-core">0004</span>
+  <span class="title">Shell 脚本编程</span>
+  <div class="desc">变量、条件判断、循环、函数、set -euo pipefail 错误处理。实战：部署前检查脚本。</div>
+  <div class="prereq">前置：0002（命令行基础）→ 后续：0006 / 0007</div>
+</a>
+
+<a class="lesson-card" href="lessons/0005-docker-basics.html">
+  <span class="num pill pill-core">0005</span>
+  <span class="title">Docker 入门</span>
+  <div class="desc">Dockerfile → Image → Container。分层缓存、多阶段构建、Docker Compose。实战：容器化 Node.js 应用。</div>
+  <div class="prereq">前置：0002（命令行）→ 后续：0007 / 0014</div>
+</a>
+
+<a class="lesson-card" href="lessons/0006-cicd-github-actions.html">
+  <span class="num pill pill-core">0006</span>
+  <span class="title">CI/CD：GitHub Actions</span>
+  <div class="desc">Workflow、Job、Step、Runner。Secrets、触发器。实战：给你的项目写 CI 流水线。</div>
+  <div class="prereq">前置：0003（Git）+ 0004（脚本）→ 后续：0007</div>
+</a>
+
+<a class="lesson-card" href="lessons/0007-deployment.html">
+  <span class="num pill pill-core">0007</span>
+  <span class="title">部署实战</span>
+  <div class="desc">SSH 免密登录、Nginx 反向代理、Let's Encrypt HTTPS、Docker Compose 生产配置、部署脚本。</div>
+  <div class="prereq">前置：0005（Docker）+ 0006（CI/CD）→ 后续：0014</div>
+</a>
+
+<a class="lesson-card" href="lessons/0008-terraform-iac.html">
+  <span class="num pill pill-core">0008</span>
+  <span class="title">IaC：Terraform</span>
+  <div class="desc">Provider、Resource、State、Plan/Apply。HCL 语法。实战：用 Terraform 管 Docker 容器。</div>
+  <div class="prereq">前置：0005（Docker）→ 后续：独立模块</div>
+</a>
+
+<a class="lesson-card" href="lessons/0009-monitoring.html">
+  <span class="num pill pill-core">0009</span>
+  <span class="title">监控 & 可观测性</span>
+  <div class="desc">Prometheus + Grafana + Node Exporter。PromQL、告警规则、RED/USE 方法。实战：10 分钟搭监控栈。</div>
+  <div class="prereq">前置：0005（Docker）→ 后续：0016</div>
+</a>
+
+</ul>
+</div>
+
+<!-- ====== 阶段二：Stage 1 ====== -->
+<div class="phase">
+<h2>阶段二 · Stage 1：Linux 深入（2 节）</h2>
+<p class="subtitle">从「会用命令」到「能管服务器」。出问题能自己排查。</p>
+
+<ul class="lesson-list">
+
+<a class="lesson-card" href="lessons/0010-linux-admin.html">
+  <span class="num pill pill-linux">0010</span>
+  <span class="title">Linux 系统管理进阶</span>
+  <div class="desc">用户/组管理（useradd/usermod/visudo）、systemd unit 文件编写、cron 定时任务、logrotate 日志轮转、ufw 防火墙、磁盘挂载。</div>
+  <div class="prereq">前置：0002（命令行基础）→ 后续：0011</div>
+</a>
+
+<a class="lesson-card" href="lessons/0011-linux-troubleshooting.html">
+  <span class="num pill pill-linux">0011</span>
+  <span class="title">Linux 排错实战</span>
+  <div class="desc">strace、lsof、tcpdump、性能分析套件。5 个经典故障场景：磁盘满、OOM、端口占用、进程死亡、响应慢。</div>
+  <div class="prereq">前置：0010（系统管理）→ 后续：0012</div>
+</a>
+
+</ul>
+</div>
+
+<!-- ====== 阶段二：Stage 2 ====== -->
+<div class="phase">
+<h2>阶段二 · Stage 2：网络深入（2 节）</h2>
+<p class="subtitle">面试高频题：TCP 握手挥手、DNS 解析链、TLS 证书链、502 vs 504。</p>
+
+<ul class="lesson-list">
+
+<a class="lesson-card" href="lessons/0012-networking-basics.html">
+  <span class="num pill pill-net">0012</span>
+  <span class="title">网络协议基础</span>
+  <div class="desc">TCP/IP 四层模型、三次握手/四次挥手、连接状态（CLOSE_WAIT 告警）、DNS 解析链、TLS 握手/证书链、HTTP 状态码。</div>
+  <div class="prereq">前置：0011 → 后续：0013</div>
+</a>
+
+<a class="lesson-card" href="lessons/0013-networking-practice.html">
+  <span class="num pill pill-net">0013</span>
+  <span class="title">网络实战与负载均衡</span>
+  <div class="desc">Nginx 生产配置（限流、健康检查、超时）、负载均衡算法（L4/L7）、CDN 原理（缓存穿透/雪崩）、真实排错场景。</div>
+  <div class="prereq">前置：0012 + 0007（部署）→ 后续：0014</div>
+</a>
+
+</ul>
+</div>
+
+<!-- ====== 阶段二：Stage 3 ====== -->
+<div class="phase">
+<h2>阶段二 · Stage 3：Kubernetes（3 节）</h2>
+<p class="subtitle">容器编排的事实标准。JD 出现率 > 80%，面试必考。</p>
+
+<ul class="lesson-list">
+
+<a class="lesson-card" href="lessons/0014-k8s-core-concepts.html">
+  <span class="num pill pill-k8s">0014</span>
+  <span class="title">K8s 核心概念</span>
+  <div class="desc">架构（Control Plane + Node）、Pod、Deployment（滚动更新/回滚）、Service（ClusterIP/NodePort）、Namespace、kubectl 基础。</div>
+  <div class="prereq">前置：0005（Docker）+ 0007（部署）→ 后续：0015</div>
+</a>
+
+<a class="lesson-card" href="lessons/0015-k8s-networking-config.html">
+  <span class="num pill pill-k8s">0015</span>
+  <span class="title">K8s 网络与配置</span>
+  <div class="desc">Ingress（外部流量入口）、ConfigMap/Secret（配置管理）、PVC（持久化存储）、资源限制（requests/limits）、Probes（liveness/readiness/startup）。</div>
+  <div class="prereq">前置：0014 → 后续：0016</div>
+</a>
+
+<a class="lesson-card" href="lessons/0016-k8s-production.html">
+  <span class="num pill pill-k8s">0016</span>
+  <span class="title">K8s 生产实践</span>
+  <div class="desc">Helm（包管理器）、HPA（自动扩缩容）、RBAC（权限控制）、K8s 监控集成（Prometheus Stack）、安全清单。</div>
+  <div class="prereq">前置：0015 + 0009（监控）→ 后续：结业项目</div>
+</a>
+
+</ul>
+</div>
+
+<!-- ====== 参考文档 ====== -->
+<h2>参考文档</h2>
+<ul>
+  <li><a href="reference/glossary.html">术语表（Glossary）</a> — 100+ DevOps 核心术语，中英对照</li>
+  <li><a href="reference/linux-cheatsheet.html">Linux 命令速查表</a> — 按功能分类的高频命令，建议打印</li>
+  <li><a href="RESOURCES.md">学习资源（RESOURCES.md）</a> — 书籍、课程、社区推荐</li>
+  <li><a href="MISSION.md">学习目标（MISSION.md）</a> — 你的 DevOps 转型目标</li>
+</ul>
+
+<div class="cite">
+  共 16 节课 · 4 个参考文档 · <a href="MISSION.md">Mission</a>
+</div>
+
+</body>
+</html>

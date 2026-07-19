@@ -1,0 +1,280 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Lesson 0009 — 监控：你不知道，就不存在</title>
+<link rel="stylesheet" href="../assets/style.css">
+</head>
+<body>
+
+<h1>Lesson 0009：监控 & 可观测性——看不见的问题就是定时炸弹</h1>
+
+<p>DevOps 四大支柱的最后一根：<strong>监控（Monitoring）和可观测性（Observability）</strong>。前 8 课教你构建和部署，这一课教你<strong>知道系统还活着</strong>。</p>
+
+<h2>三个层次：Metrics、Logs、Traces</h2>
+
+<table>
+  <tr><th>层次</th><th>回答什么问题</th><th>工具</th></tr>
+  <tr><td><strong>Metrics（指标）</strong></td><td>「系统整体怎么样？」CPU、内存、请求速率、错误率</td><td>Prometheus</td></tr>
+  <tr><td><strong>Logs（日志）</strong></td><td>「具体发生了什么？」某次请求的详细信息、错误堆栈</td><td>Loki / ELK</td></tr>
+  <tr><td><strong>Traces（链路追踪）</strong></td><td>「一个请求经过了哪些服务？」微服务间的调用链</td><td>Jaeger / Tempo</td></tr>
+</table>
+
+<p>这节课聚焦 <strong>Metrics</strong>——最基础也最重要的监控层。学会 Metrics，你就覆盖了 80% 的日常监控需求。</p>
+
+<h2>Prometheus + Grafana：监控的黄金搭档</h2>
+
+<pre><code>你的服务器 ──→ Node Exporter（采集系统指标）
+你的应用   ──→ 暴露 /metrics 端点
+                    ↓ scrape（定期抓取）
+              Prometheus（存储 + 查询）
+                    ↓ 数据源
+               Grafana（可视化仪表盘 + 告警）</code></pre>
+
+<ul>
+  <li><strong>Prometheus</strong>：时间序列数据库。定期从目标「抓取」(scrape) 指标数据，存储并提供 PromQL 查询语言。</li>
+  <li><strong>Node Exporter</strong>：Prometheus 的「探针」。装在每台服务器上，暴露 CPU、内存、磁盘、网络等系统指标。</li>
+  <li><strong>Grafana</strong>：可视化平台。连接 Prometheus 作为数据源，画仪表盘，配置告警规则。</li>
+</ul>
+
+<h2>动手：10 分钟搭一套监控栈</h2>
+
+<pre><code>mkdir /tmp/monitoring && cd /tmp/monitoring
+
+cat > docker-compose.yml << 'EOF'
+services:
+  prometheus:
+    image: prom/prometheus:latest
+    container_name: prometheus
+    volumes:
+      - ./prometheus.yml:/etc/prometheus/prometheus.yml
+      - prom_data:/prometheus
+    ports:
+      - "9090:9090"
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+
+  node-exporter:
+    image: prom/node-exporter:latest
+    container_name: node-exporter
+    ports:
+      - "9100:9100"
+
+  grafana:
+    image: grafana/grafana:latest
+    container_name: grafana
+    ports:
+      - "3000:3000"
+    environment:
+      - GF_SECURITY_ADMIN_PASSWORD=admin
+    volumes:
+      - grafana_data:/var/lib/grafana
+
+volumes:
+  prom_data:
+  grafana_data:
+EOF
+
+cat > prometheus.yml << 'EOF'
+global:
+  scrape_interval: 15s       # 每 15 秒抓一次
+
+scrape_configs:
+  - job_name: 'prometheus'
+    static_configs:
+      - targets: ['localhost:9090']
+
+  - job_name: 'node'
+    static_configs:
+      - targets: ['node-exporter:9100']    # Docker 内部 DNS
+EOF
+
+docker compose up -d
+
+# 验证
+curl http://localhost:9090   # Prometheus UI
+curl http://localhost:9100/metrics | head -20  # 裸指标数据（看着吓人但不用你读）
+curl http://localhost:3000   # Grafana（admin / admin）</code></pre>
+
+<h2>PromQL：Prometheus 的查询语言</h2>
+
+<p>打开 <code>http://localhost:9090</code>，在 Graph 标签页里试试这些查询：</p>
+
+<pre><code># CPU 使用率（所有核心平均）
+rate(node_cpu_seconds_total{mode="user"}[5m]) * 100
+
+# 内存使用百分比
+(1 - node_memory_MemAvailable_bytes / node_memory_MemTotal_bytes) * 100
+
+# 磁盘可用空间（GB）
+node_filesystem_avail_bytes / 1024 / 1024 / 1024
+
+# 网络接收速率（bytes/sec）
+rate(node_network_receive_bytes_total[5m])</code></pre>
+
+<table>
+  <tr><th>PromQL 函数</th><th>作用</th></tr>
+  <tr><td><code>rate(metric[5m])</code></td><td>计算 5 分钟内的每秒增长率（最常用）</td></tr>
+  <tr><td><code>avg(metric)</code></td><td>平均值</td></tr>
+  <tr><td><code>sum(metric)</code></td><td>求和</td></tr>
+  <tr><td><code>{job="node"}</code></td><td>按 job 标签过滤</td></tr>
+  <tr><td><code>&gt; 80</code></td><td>只显示值大于 80 的</td></tr>
+</table>
+
+<h2>Grafana Dashboard：从数据到图表</h2>
+
+<p>打开 <code>http://localhost:3000</code>（admin/admin），三步创建仪表盘：</p>
+
+<ol>
+  <li><strong>添加数据源：</strong>Connections → Data Sources → Prometheus → URL 填 <code>http://prometheus:9090</code> → Save &amp; test</li>
+  <li><strong>导入现成仪表盘：</strong>Dashboards → Import → 输入 <code>1860</code>（Node Exporter Full 模板 ID）→ 选 Prometheus 数据源 → Import</li>
+  <li>瞬间看到 CPU、内存、磁盘、网络的完整仪表盘！</li>
+</ol>
+
+<div class="tip">
+Grafana 社区有成千上万个预建仪表盘：<a href="https://grafana.com/grafana/dashboards/" target="_blank">grafana.com/grafana/dashboards/</a>。几乎任何东西都有现成的——Node Exporter、Nginx、PostgreSQL、Docker、Kubernetes。导入 ID 就行，不用自己画。
+</div>
+
+<h2>告警：比你先知道出问题了</h2>
+
+<p>监控让你能看到问题。告警让问题<strong>来找你</strong>。</p>
+
+<pre><code># alert.rules.yml（放在 prometheus.yml 同目录，在 prometheus.yml 里引用它）
+groups:
+  - name: node-alerts
+    rules:
+      - alert: HighCPUUsage
+        expr: 100 - (avg by(instance) (rate(node_cpu_seconds_total{mode="idle"}[5m])) * 100) > 80
+        for: 5m                           # 持续 5 分钟才告警（防止抖动）
+        labels:
+          severity: warning
+        annotations:
+          summary: "High CPU usage on {{ $labels.instance }}"
+          description: "CPU usage is {{ $value }}% for 5 minutes"
+
+      - alert: DiskAlmostFull
+        expr: (node_filesystem_avail_bytes / node_filesystem_size_bytes) * 100 < 10
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Disk almost full on {{ $labels.instance }}"
+          description: "Only {{ $value }}% space left"</code></pre>
+
+<p>告警可以推到 Slack、钉钉、邮件、PagerDuty。在 Grafana 里也能配告警——但 Prometheus Alertmanager 更专业（去重、分组、静默、升级）。</p>
+
+<h2>给你的应用加 Metrics</h2>
+
+<p>Node Exporter 监控的是服务器。你自己的应用也需要暴露指标：</p>
+
+<pre><code>// Node.js 示例：用 prom-client 库
+const prometheus = require('prom-client');
+const http = require('http');
+
+// 创建一个计数器：记录 HTTP 请求总数
+const httpRequestsTotal = new prometheus.Counter({
+  name: 'http_requests_total',
+  help: 'Total number of HTTP requests',
+  labelNames: ['method', 'status']
+});
+
+// 在你的请求处理里
+app.use((req, res, next) => {
+  res.on('finish', () => {
+    httpRequestsTotal.inc({ method: req.method, status: res.statusCode });
+  });
+  next();
+});
+
+// 暴露 /metrics 端点（Prometheus 来 scrape 这个端点）
+app.get('/metrics', async (req, res) => {
+  res.set('Content-Type', prometheus.register.contentType);
+  res.end(await prometheus.register.metrics());
+});</code></pre>
+
+<p>然后在 <code>prometheus.yml</code> 里加一个 scrape target 指向你的应用端口，Prometheus 就开始收集你的业务指标了。</p>
+
+<div class="note">
+<strong>RED 方法（面试常考）：</strong>对每个服务监控三个核心指标——<strong>R</strong>ate（每秒请求数）、<strong>E</strong>rrors（错误率）、<strong>D</strong>uration（响应延迟）。再加一个 <strong>USE 方法</strong>（系统层）——Utilization、Saturation、Errors。这两个方法论帮你回答「该监控什么」。
+</div>
+
+<h2>小测验</h2>
+
+<form id="quiz" onsubmit="return checkQuiz(event)">
+  <fieldset style="border:1px solid var(--border); border-radius:6px; padding:1rem; margin:1rem 0;">
+    <legend style="font-weight:600;">Q1：Prometheus 获取指标数据的方式是什么？</legend>
+    <label><input type="radio" name="q1" value="a"> 目标主动推送数据给 Prometheus</label>
+    <label><input type="radio" name="q1" value="b"> Prometheus 定期从目标抓取（scrape）/metrics 端点</label>
+    <label><input type="radio" name="q1" value="c"> 从日志文件中解析指标</label>
+    <label><input type="radio" name="q1" value="d"> 通过 WebSocket 实时流</label>
+  </fieldset>
+
+  <fieldset style="border:1px solid var(--border); border-radius:6px; padding:1rem; margin:1rem 0;">
+    <legend style="font-weight:600;">Q2：RED 方法中的 R、E、D 分别代表什么？</legend>
+    <label><input type="radio" name="q2" value="a"> Read, Execute, Delete</label>
+    <label><input type="radio" name="q2" value="b"> Rate, Errors, Duration</label>
+    <label><input type="radio" name="q2" value="c"> Request, Event, Data</label>
+    <label><input type="radio" name="q2" value="d"> Reliability, Efficiency, Durability</label>
+  </fieldset>
+
+  <fieldset style="border:1px solid var(--border); border-radius:6px; padding:1rem; margin:1rem 0;">
+    <legend style="font-weight:600;">Q3：Node Exporter 的作用是什么？</legend>
+    <label><input type="radio" name="q3" value="a"> 导出 Docker 容器的日志</label>
+    <label><input type="radio" name="q3" value="b"> 收集服务器的系统指标（CPU、内存、磁盘）并暴露 /metrics</label>
+    <label><input type="radio" name="q3" value="c"> 监控 Kubernetes 节点</label>
+    <label><input type="radio" name="q3" value="d"> 导出 Node.js 应用的内存快照</label>
+  </fieldset>
+
+  <fieldset style="border:1px solid var(--border); border-radius:6px; padding:1rem; margin:1rem 0;">
+    <legend style="font-weight:600;">Q4：告警规则里 <code>for: 5m</code> 的含义是什么？</legend>
+    <label><input type="radio" name="q4" value="a"> 每 5 分钟检查一次</label>
+    <label><input type="radio" name="q4" value="b"> 条件满足后 5 分钟内必须解决</label>
+    <label><input type="radio" name="q4" value="c"> 条件持续满足 5 分钟才触发告警（防止瞬时抖动）</label>
+    <label><input type="radio" name="q4" value="d"> 告警最多持续 5 分钟</label>
+  </fieldset>
+
+  <button type="submit" style="background:var(--accent);color:#fff;border:none;padding:0.6rem 1.5rem;font-size:1rem;border-radius:6px;cursor:pointer;font-family:inherit;">检查答案</button>
+</form>
+
+<div id="quiz-result" style="margin-top:1rem;"></div>
+
+<h2>推荐资源</h2>
+<ul>
+  <li><a href="https://prometheus.io/docs/introduction/overview/" target="_blank">Prometheus 官方文档</a> — 入门 + PromQL 完全参考</li>
+  <li><a href="https://grafana.com/tutorials/" target="_blank">Grafana 官方教程</a> — 从安装到高级仪表盘</li>
+  <li><a href="https://grafana.com/grafana/dashboards/1860-node-exporter-full/" target="_blank">Node Exporter Full Dashboard (ID: 1860)</a> — 最流行的系统监控仪表盘</li>
+  <li><a href="https://sre.google/sre-book/monitoring-distributed-systems/" target="_blank">Google SRE Book: Monitoring Distributed Systems</a> — 监控哲学，面试高段位答案都在这</li>
+</ul>
+
+<div class="tip">
+<strong>🎉 恭喜！这是 9 节核心课程的最后 1 节。</strong>你已经覆盖了 DevOps 的全部基础层：概念 → Linux → Git → 脚本 → Docker → CI/CD → 部署 → IaC → 监控。
+</div>
+
+<div class="cite">
+<a href="./0008-terraform-iac.html">← Lesson 0008</a> · <a href="../reference/glossary.html">术语表</a> · <a href="../MISSION.md">Mission</a>
+</div>
+
+<script>
+function checkQuiz(e) {
+  e.preventDefault();
+  const answers = { q1: 'b', q2: 'b', q3: 'b', q4: 'c' };
+  let correct = 0, feedback = [];
+  for (const [q, a] of Object.entries(answers)) {
+    const sel = document.querySelector(`input[name="${q}"]:checked`);
+    if (!sel) feedback.push(q + ': 未作答');
+    else if (sel.value === a) { correct++; feedback.push(q + ': ✓ 正确'); }
+    else feedback.push(q + ': ✗ 错误');
+  }
+  const pct = Math.round(correct/4*100);
+  const div = document.getElementById('quiz-result');
+  div.innerHTML = `<div style="background:${pct===100?'var(--success-bg)':'var(--warn-bg)'};color:${pct===100?'var(--success-fg)':'var(--warn-fg)'};padding:0.75rem 1rem;border-radius:6px;">
+    <strong>得分：${correct}/4 (${pct}%)</strong><br>${feedback.join('<br>')}
+    ${pct===100?'<br>🎉 全对！监控核心概念已掌握。':''}
+  </div>`;
+}
+</script>
+
+</body>
+</html>

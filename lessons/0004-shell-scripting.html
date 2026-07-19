@@ -1,0 +1,307 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Lesson 0004 — Shell 脚本：把命令行变成自动化</title>
+<link rel="stylesheet" href="../assets/style.css">
+</head>
+<body>
+
+<h1>Lesson 0004：Shell 脚本——把命令变成程序</h1>
+
+<p>你已经在终端里敲过几十条命令了。但 DevOps 不是一条一条敲的——是<strong>写成脚本，自动跑的</strong>。</p>
+
+<p>CI/CD 流水线的每一个步骤、服务器的启动脚本、定时备份任务、健康检查——本质都是 Shell 脚本。这节课让你从「手动敲命令」升级到「写脚本自动执行」。</p>
+
+<h2>Shell 脚本是什么？</h2>
+
+<p>一个 Shell 脚本就是一个<strong>包含一系列命令的文本文件</strong>，你给它执行权限，它按顺序跑。</p>
+
+<pre><code>#!/bin/bash
+# 这是我的第一个脚本
+echo "Hello, DevOps!"
+date
+whoami</code></pre>
+
+<p>拆解：</p>
+<ul>
+  <li><code>#!/bin/bash</code> — Shebang（#!），告诉系统用哪个解释器执行这个脚本</li>
+  <li><code># 这是我的第一个脚本</code> — 注释，`#` 开头就是注释</li>
+  <li>其余行 — 跟你在终端里敲的完全一样</li>
+</ul>
+
+<div class="note">
+<code>#!/bin/bash</code> vs <code>#!/bin/sh</code>：bash 是 sh 的超集，有更多功能（数组、<code>[[ ]]</code>、更好的语法）。Ubuntu 上 <code>/bin/sh</code> 是 dash（更小更快但功能少）。<strong>DevOps 脚本默认用 bash。</strong>
+</div>
+
+<h2>第一部分：核心语法（15 分钟）</h2>
+
+<p>在终端里跟着敲。边敲边理解。</p>
+
+<h3>1. 变量</h3>
+
+<pre><code>#!/bin/bash
+APP_NAME="my-app"          # 定义变量（等号两边不能有空格！）
+VERSION=1.0.0
+echo "Deploying $APP_NAME v$VERSION"   # $变量名 取值
+echo "Path: ${APP_NAME}-${VERSION}"    # ${} 避免歧义
+
+# 命令替换：把命令的输出赋给变量
+CURRENT_DATE=$(date +%Y-%m-%d)
+echo "Today is $CURRENT_DATE"</code></pre>
+
+<h3>2. 条件判断</h3>
+
+<pre><code>#!/bin/bash
+if [ "$1" == "production" ]; then     # $1 = 第一个命令行参数
+    echo "⚠️  Deploying to PRODUCTION!"
+elif [ "$1" == "staging" ]; then
+    echo "Deploying to staging..."
+else
+    echo "Usage: $0 <production|staging>"
+    exit 1                            # 非 0 = 出错
+fi
+
+# 文件/目录判断（DevOps 高频）
+if [ -f ".env" ]; then                # -f = 文件存在？
+    echo ".env file found"
+fi
+if [ -d "/var/log" ]; then            # -d = 目录存在？
+    echo "log directory exists"
+fi</code></pre>
+
+<table>
+  <tr><th>测试</th><th>含义</th></tr>
+  <tr><td><code>[ -f file ]</code></td><td>file 存在且是普通文件</td></tr>
+  <tr><td><code>[ -d dir ]</code></td><td>dir 存在且是目录</td></tr>
+  <tr><td><code>[ -z "$var" ]</code></td><td>$var 为空字符串</td></tr>
+  <tr><td><code>[ -n "$var" ]</code></td><td>$var 非空</td></tr>
+  <tr><td><code>[ "$a" == "$b" ]</code></td><td>字符串相等</td></tr>
+  <tr><td><code>[ $a -eq $b ]</code></td><td>整数相等</td></tr>
+</table>
+
+<h3>3. 循环</h3>
+
+<pre><code>#!/bin/bash
+# 对列表中的每一项执行操作
+SERVICES="nginx docker postgresql"
+for svc in $SERVICES; do
+    echo "Restarting $svc..."
+    sudo systemctl restart $svc
+done
+
+# 或者遍历命令输出
+for container in $(docker ps -q); do
+    echo "Container: $container"
+done</code></pre>
+
+<h3>4. 函数</h3>
+
+<pre><code>#!/bin/bash
+# 定义函数
+check_service() {
+    local service_name=$1              # local = 局部变量
+    if systemctl is-active --quiet "$service_name"; then
+        echo "✅ $service_name is running"
+        return 0
+    else
+        echo "❌ $service_name is DOWN!"
+        return 1
+    fi
+}
+
+# 调用函数
+check_service "nginx"
+check_service "docker"</code></pre>
+
+<h2>第二部分：错误处理——让脚本「靠谱」</h2>
+
+<p>默认情况下，Shell 脚本遇到错误<strong>不会停</strong>——它继续执行下一行，特别危险。</p>
+
+<pre><code>#!/bin/bash
+set -e              # 任何命令返回非 0 就立刻退出
+set -u              # 使用未定义变量就报错退出
+set -o pipefail     # 管道中任何一个命令失败，整个管道算失败
+
+# 这三个通常是 DevOps 脚本的前三行（写在 shebang 之后）
+
+# 如果你预期某个命令可能失败，用 || true
+grep "maybe-not-there" /etc/hosts || true   # 找不到也不退出
+
+# 自定义错误处理
+trap 'echo "❌ Script failed on line $LINENO"' ERR</code></pre>
+
+<div class="tip">
+<strong>DevOps 标准脚本头：</strong>每个生产环境脚本的前 5 行应该长这样：
+<pre><code>#!/bin/bash
+set -euo pipefail
+# Script: deploy.sh
+# Purpose: Deploy application to target environment</code></pre>
+</div>
+
+<h2>第三部分：实战——写一个部署前检查脚本</h2>
+
+<p>这是一个真实 DevOps 场景：部署之前，检查所有前置条件。</p>
+
+<pre><code>#!/bin/bash
+set -euo pipefail
+
+# === Config ===
+REQUIRED_SPACE_MB=500
+REQUIRED_SERVICES="docker"
+
+# === Colors (optional, makes output pretty) ===
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+NC='\033[0m' # No Color
+
+echo "=== Pre-deployment Check ==="
+
+# 1. Check disk space
+echo -n "Checking disk space... "
+AVAILABLE=$(df / --output=avail | tail -1 | tr -d ' ')
+AVAILABLE_MB=$((AVAILABLE / 1024))
+if [ "$AVAILABLE_MB" -lt "$REQUIRED_SPACE_MB" ]; then
+    echo -e "${RED}FAIL${NC} (${AVAILABLE_MB}MB < ${REQUIRED_SPACE_MB}MB)"
+    exit 1
+fi
+echo -e "${GREEN}OK${NC} (${AVAILABLE_MB}MB)"
+
+# 2. Check required services
+for svc in $REQUIRED_SERVICES; do
+    echo -n "Checking $svc... "
+    if systemctl is-active --quiet "$svc" 2>/dev/null; then
+        echo -e "${GREEN}running${NC}"
+    else
+        echo -e "${RED}not running${NC}"
+        exit 1
+    fi
+done
+
+# 3. Check .env file
+echo -n "Checking .env... "
+if [ -f ".env" ]; then
+    echo -e "${GREEN}found${NC}"
+else
+    echo -e "${RED}missing${NC}"
+    exit 1
+fi
+
+echo -e "\n${GREEN}✅ All checks passed! Ready to deploy.${NC}"</code></pre>
+
+<p>把这个保存为 <code>pre-deploy-check.sh</code>，加执行权限，你就有了一套标准化部署检查。</p>
+
+<h2>动手练习：写一个服务健康检查脚本</h2>
+
+<p><strong>任务：</strong>写一个脚本 <code>health-check.sh</code>，接受一个服务名作为参数，检查：</p>
+<ol>
+  <li>该服务是否在运行（<code>systemctl is-active</code>）</li>
+  <li>该服务对应的端口是否在监听（<code>ss -tlnp | grep 端口号</code>）——用 if 判断</li>
+  <li>输出带颜色的结果</li>
+</ol>
+
+<pre><code># 模板（填空）
+#!/bin/bash
+set -euo pipefail
+
+SERVICE=$1
+
+if [ -z "____" ]; then
+    echo "Usage: $0 <service-name>"
+    exit 1
+fi
+
+# Check service status
+if ______ is-active --quiet "$SERVICE"; then
+    echo "✅ $SERVICE is running"
+else
+    echo "❌ $SERVICE is not running"
+    exit 1
+fi
+
+# Check port (hint: nginx=80, docker=2375)
+# Bonus: make port configurable</code></pre>
+
+<h2>小测验</h2>
+
+<form id="quiz" onsubmit="return checkQuiz(event)">
+  <fieldset style="border:1px solid var(--border); border-radius:6px; padding:1rem; margin:1rem 0;">
+    <legend style="font-weight:600;">Q1：Shebang <code>#!/bin/bash</code> 的作用是什么？</legend>
+    <label><input type="radio" name="q1" value="a"> 注释，说明脚本作者</label>
+    <label><input type="radio" name="q1" value="b"> 指定用哪个解释器执行脚本</label>
+    <label><input type="radio" name="q1" value="c"> 激活 bash 调试模式</label>
+    <label><input type="radio" name="q1" value="d"> 导入 bash 库</label>
+  </fieldset>
+
+  <fieldset style="border:1px solid var(--border); border-radius:6px; padding:1rem; margin:1rem 0;">
+    <legend style="font-weight:600;">Q2：<code>set -e</code> 的作用是什么？</legend>
+    <label><input type="radio" name="q2" value="a"> 开启详细输出</label>
+    <label><input type="radio" name="q2" value="b"> 任何命令失败立即退出脚本</label>
+    <label><input type="radio" name="q2" value="c"> 启用扩展正则表达式</label>
+    <label><input type="radio" name="q2" value="d"> 导出所有变量到子进程</label>
+  </fieldset>
+
+  <fieldset style="border:1px solid var(--border); border-radius:6px; padding:1rem; margin:1rem 0;">
+    <legend style="font-weight:600;">Q3：如何把 <code>date</code> 命令的输出赋给变量 <code>TODAY</code>？</legend>
+    <label><input type="radio" name="q3" value="a"><code> TODAY=date</code></label>
+    <label><input type="radio" name="q3" value="b"><code> TODAY=$(date)</code></label>
+    <label><input type="radio" name="q3" value="c"><code> TODAY=${date}</code></label>
+    <label><input type="radio" name="q3" value="d"><code> TODAY=`$date`</code></label>
+  </fieldset>
+
+  <fieldset style="border:1px solid var(--border); border-radius:6px; padding:1rem; margin:1rem 0;">
+    <legend style="font-weight:600;">Q4：脚本的第一个命令行参数用什么变量获取？</legend>
+    <label><input type="radio" name="q4" value="a"><code> $0</code></label>
+    <label><input type="radio" name="q4" value="b"><code> $1</code></label>
+    <label><input type="radio" name="q4" value="c"><code> $@</code></label>
+    <label><input type="radio" name="q4" value="d"><code> $#</code></label>
+  </fieldset>
+
+  <button type="submit" style="background:var(--accent);color:#fff;border:none;padding:0.6rem 1.5rem;font-size:1rem;border-radius:6px;cursor:pointer;font-family:inherit;">检查答案</button>
+</form>
+
+<div id="quiz-result" style="margin-top:1rem;"></div>
+
+<h2>推荐资源</h2>
+<ul>
+  <li><a href="https://www.shellcheck.net/" target="_blank">ShellCheck</a> — Shell 脚本的 linter。把脚本贴进去，它会指出潜在问题。必备工具。</li>
+  <li><a href="https://devhints.io/bash" target="_blank">Bash scripting cheatsheet (devhints.io)</a> — 最简洁的 Bash 速查表</li>
+  <li><a href="https://tldp.org/LDP/abs/html/" target="_blank">Advanced Bash-Scripting Guide</a> — 想深入时的完整参考（略长，当手册查）</li>
+  <li><strong>本地跑 <code>shellcheck your-script.sh</code></strong> — 安装：<code>sudo apt install shellcheck</code></li>
+</ul>
+
+<h2>下一步</h2>
+
+<p>你已经有了命令行基础、Git 进阶、Shell 脚本三项核心技能。下一课我们进入 DevOps 的第一个「重型武器」：<strong>Docker 入门</strong>——用容器化你的前端/后端项目，告别「在我机器上能跑」。</p>
+
+<div class="note">
+写脚本卡住了？把脚本贴给我，我帮你 debug。建议装 <code>shellcheck</code>，它比你自己检查快 10 倍。
+</div>
+
+<div class="cite">
+<a href="./0003-git-advanced.html">← Lesson 0003</a> · <a href="../reference/glossary.html">术语表</a> · <a href="../MISSION.md">Mission</a>
+</div>
+
+<script>
+function checkQuiz(e) {
+  e.preventDefault();
+  const answers = { q1: 'b', q2: 'b', q3: 'b', q4: 'b' };
+  let correct = 0, feedback = [];
+  for (const [q, a] of Object.entries(answers)) {
+    const sel = document.querySelector(`input[name="${q}"]:checked`);
+    if (!sel) feedback.push(q + ': 未作答');
+    else if (sel.value === a) { correct++; feedback.push(q + ': ✓ 正确'); }
+    else feedback.push(q + ': ✗ 错误');
+  }
+  const pct = Math.round(correct/4*100);
+  const div = document.getElementById('quiz-result');
+  div.innerHTML = `<div style="background:${pct===100?'var(--success-bg)':'var(--warn-bg)'};color:${pct===100?'var(--success-fg)':'var(--warn-fg)'};padding:0.75rem 1rem;border-radius:6px;">
+    <strong>得分：${correct}/4 (${pct}%)</strong><br>${feedback.join('<br>')}
+    ${pct===100?'<br>🎉 全对！Shell 脚本核心语法已掌握。':''}
+  </div>`;
+}
+</script>
+
+</body>
+</html>

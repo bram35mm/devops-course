@@ -1,0 +1,236 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Lesson 0013 — 网络实战与负载均衡</title>
+<link rel="stylesheet" href="../assets/style.css">
+</head>
+<body>
+
+<h1>Lesson 0013：网络实战——负载均衡、CDN 和真实排错</h1>
+
+<p><a href="./0012-networking-basics.html">← Lesson 0012</a> 讲了协议原理。这一课把理论落到 Nginx 配置和真实场景。</p>
+
+<h2>1. Nginx 反向代理进阶</h2>
+
+<p>Lesson 0007 讲了基础反代。现在上生产级配置：</p>
+
+<pre><code># /etc/nginx/sites-available/myapp —— 生产级配置
+upstream app_backend {
+    least_conn;                        # 最少连接数算法（默认是轮询）
+    server 127.0.0.1:3000 max_fails=3 fail_timeout=30s;  # 3次失败后摘除30秒
+    server 127.0.0.1:3001 max_fails=3 fail_timeout=30s;
+    server 10.0.0.5:3000 backup;       # 备用服务器，只在其他都挂了才用
+    keepalive 32;                       # 保持 32 个到后端的空闲连接
+}
+
+server {
+    listen 80;
+    server_name example.com;
+
+    # 限流：每个 IP 每秒最多 10 个请求
+    limit_req_zone $binary_remote_addr zone=mylimit:10m rate=10r/s;
+    limit_req zone=mylimit burst=20 nodelay;
+
+    # 限并发：每个 IP 最多 5 个并发连接
+    limit_conn_zone $binary_remote_addr zone=connlimit:10m;
+    limit_conn connlimit 5;
+
+    # 静态文件直接返回（不转发到后端）
+    location /static/ {
+        alias /var/www/static/;
+        expires 30d;
+        add_header Cache-Control "public, immutable";
+    }
+
+    # API 请求转发到后端
+    location /api/ {
+        proxy_pass http://app_backend;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+
+        # 超时配置
+        proxy_connect_timeout 5s;       # 连后端超时
+        proxy_read_timeout 30s;         # 读后端响应超时
+        proxy_send_timeout 10s;         # 发请求给后端超时
+    }
+
+    # 健康检查端点（不记日志）
+    location /health {
+        access_log off;
+        return 200 "OK";
+    }
+}</code></pre>
+
+<h2>2. 负载均衡算法</h2>
+
+<table>
+  <tr><th>算法</th><th>Nginx 指令</th><th>适用场景</th></tr>
+  <tr><td>轮询（默认）</td><td>—</td><td>后端服务器性能相同</td></tr>
+  <tr><td>加权轮询</td><td><code>server ... weight=3;</code></td><td>服务器性能不同</td></tr>
+  <tr><td>最少连接</td><td><code>least_conn;</code></td><td>请求处理时间不均匀</td></tr>
+  <tr><td>IP Hash</td><td><code>ip_hash;</code></td><td>需要会话保持（同一 IP 总到同一台）</td></tr>
+</table>
+
+<h2>3. 负载均衡的层次</h2>
+
+<pre><code>DNS 层    Route53 / Cloudflare → 把域名解析到不同 IP（最简单，但切换慢）
+L4 (TCP)  Nginx stream / HAProxy → 只看 IP+端口，不看内容。性能最高
+L7 (HTTP) Nginx http / Traefik → 看 URL、Header、Cookie 做路由。最灵活</code></pre>
+
+<h2>4. CDN 原理</h2>
+
+<p>CDN = 把静态文件缓存在离用户最近的边缘节点。</p>
+
+<pre><code>用户在北京 → 北京边缘节点（有缓存）→ 直接返回 ✈️ 快
+用户在北京 → 北京边缘节点（无缓存）→ 回源到你的服务器 → 缓存后返回</code></pre>
+
+<p>关键配置：</p>
+<ul>
+  <li><strong>Cache-Control 头：</strong> <code>public, max-age=86400</code> → CDN 缓存 24 小时</li>
+  <li><strong>Cache Key：</strong> 通常 = 域名 + URL。可以加 Query String、Cookie 等</li>
+  <li><strong>缓存穿透：</strong> 大量请求同一个不存在的资源，全部回源 → 源站被打垮</li>
+  <li><strong>缓存雪崩：</strong> 大量缓存同时过期 → 瞬间全部回源 → CDN 加随机过期偏移</li>
+</ul>
+
+<h2>5. 真实排错场景</h2>
+
+<h3>场景 A：「用户说网站很慢」</h3>
+
+<pre><code># 1. 从用户侧开始
+curl -w "DNS:%{time_namelookup}s TCP:%{time_connect}s TLS:%{time_appconnect}s FirstByte:%{time_starttransfer}s Total:%{time_total}s\n" -o /dev/null -s https://example.com
+
+# 2. 看服务器负载
+ssh server "uptime; free -h; iostat -x 1 3"
+
+# 3. 看 Nginx 访问日志——找慢请求
+awk '$NF > 3 {print $0}' /var/log/nginx/access.log  # 响应时间 > 3 秒的
+
+# 4. 看数据库慢查询（如果有的话）
+# MySQL: SHOW FULL PROCESSLIST; 或 slow query log</code></pre>
+
+<h3>场景 B：「间歇性 502」</h3>
+
+<pre><code># 1. 确认后端是否活着
+ss -tlnp | grep 3000
+curl -s -o /dev/null -w "%{http_code}" http://127.0.0.1:3000/health
+
+# 2. 看 Nginx 错误日志
+tail -100 /var/log/nginx/error.log | grep "upstream"
+
+# 3. 检查是不是连接数爆了
+ss -s    # 看总连接数
+# 如果大量 TIME_WAIT → 调内核参数或启用 keepalive
+
+# 4. 检查文件描述符限制
+cat /proc/$(pgrep nginx | head -1)/limits | grep "open files"</code></pre>
+
+<h3>场景 C：「端口不通」</h3>
+
+<pre><code># 从外到内排查
+ping -c 3 server-ip           # 1. 机器活着吗？
+nc -zv server-ip 80           # 2. 端口开着吗？
+# 如果是云服务器：
+# 3. 检查安全组/防火墙是否放行 80
+# 4. 检查服务是否绑在 0.0.0.0 而不是 127.0.0.1
+sudo ss -tlnp | grep :80     # 0.0.0.0:80 = 对外监听，127.0.0.1:80 = 只本地</code></pre>
+
+<h2>动手练习</h2>
+
+<p>用 Docker 搭两个后端 + Nginx 负载均衡：</p>
+
+<pre><code>mkdir /tmp/lb-demo && cd /tmp/lb-demo
+
+# docker-compose.yml: Nginx + 2 个 Node.js 后端
+cat > docker-compose.yml << 'EOF'
+services:
+  nginx:
+    image: nginx:alpine
+    ports: ["8080:80"]
+    volumes: ["./nginx.conf:/etc/nginx/conf.d/default.conf"]
+  backend1:
+    image: node:22-alpine
+    command: node -e "require('http').createServer((q,r)=>{r.end('Server 1\\n')}).listen(3000)"
+  backend2:
+    image: node:22-alpine
+    command: node -e "require('http').createServer((q,r)=>{r.end('Server 2\\n')}).listen(3000)"
+EOF
+
+cat > nginx.conf << 'EOF'
+upstream backends { server backend1:3000; server backend2:3000; }
+server {
+    listen 80;
+    location / { proxy_pass http://backends; }
+}
+EOF
+
+docker compose up -d
+# 多次 curl，看到轮询返回 Server 1 和 Server 2
+for i in 1 2 3 4; do curl -s http://localhost:8080; done
+
+docker compose down</code></pre>
+
+<h2>小测验</h2>
+
+<form id="quiz" onsubmit="return checkQuiz(event)">
+  <fieldset style="border:1px solid var(--border); border-radius:6px; padding:1rem; margin:1rem 0;">
+    <legend style="font-weight:600;">Q1：L4 和 L7 负载均衡的区别？</legend>
+    <label><input type="radio" name="q1" value="a"> 没有区别</label>
+    <label><input type="radio" name="q1" value="b"> L4 看 IP+端口，L7 看 HTTP 内容（URL、Header、Cookie）</label>
+    <label><input type="radio" name="q1" value="c"> L4 更快，但 L7 支持加密</label>
+    <label><input type="radio" name="q1" value="d"> L4 是软件负载均衡，L7 是硬件</label>
+  </fieldset>
+
+  <fieldset style="border:1px solid var(--border); border-radius:6px; padding:1rem; margin:1rem 0;">
+    <legend style="font-weight:600;">Q2：CDN 缓存雪崩是什么？</legend>
+    <label><input type="radio" name="q2" value="a"> CDN 服务器宕机</label>
+    <label><input type="radio" name="q2" value="b"> 大量缓存同时过期，瞬间全部回源压垮源站</label>
+    <label><input type="radio" name="q2" value="c"> 黑客攻击 CDN</label>
+    <label><input type="radio" name="q2" value="d"> CDN 账单暴涨</label>
+  </fieldset>
+
+  <fieldset style="border:1px solid var(--border); border-radius:6px; padding:1rem; margin:1rem 0;">
+    <legend style="font-weight:600;">Q3：端口测试中 <code>ss -tlnp</code> 显示 <code>127.0.0.1:3000</code> 意味着什么？</legend>
+    <label><input type="radio" name="q3" value="a"> 端口 3000 对外网开放</label>
+    <label><input type="radio" name="q3" value="b"> 端口 3000 只在本机监听，外网无法访问</label>
+    <label><input type="radio" name="q3" value="c"> 端口 3000 是 UDP 协议</label>
+    <label><input type="radio" name="q3" value="d"> 端口 3000 被防火墙屏蔽</label>
+  </fieldset>
+
+  <button type="submit" style="background:var(--accent);color:#fff;border:none;padding:0.6rem 1.5rem;font-size:1rem;border-radius:6px;cursor:pointer;font-family:inherit;">检查答案</button>
+</form>
+
+<div id="quiz-result" style="margin-top:1rem;"></div>
+
+<h2>下一步</h2>
+
+<p><a href="./0014-k8s-core-concepts.html">Lesson 0014：Kubernetes 核心概念 →</a>——Pod、Deployment、Service、Namespace。容器编排的真正入口。</p>
+
+<div class="cite">
+<a href="./0012-networking-basics.html">← Lesson 0012</a> · <a href="./0014-k8s-core-concepts.html">Lesson 0014 →</a> · <a href="../reference/glossary.html">术语表</a>
+</div>
+
+<script>
+function checkQuiz(e) {
+  e.preventDefault();
+  const answers = { q1: 'b', q2: 'b', q3: 'b' };
+  let correct = 0, feedback = [];
+  for (const [q, a] of Object.entries(answers)) {
+    const sel = document.querySelector(`input[name="${q}"]:checked`);
+    if (!sel) feedback.push(q + ': 未作答');
+    else if (sel.value === a) { correct++; feedback.push(q + ': ✓ 正确'); }
+    else feedback.push(q + ': ✗ 错误');
+  }
+  const pct = Math.round(correct/3*100);
+  const div = document.getElementById('quiz-result');
+  div.innerHTML = `<div style="background:${pct===100?'var(--success-bg)':'var(--warn-bg)'};color:${pct===100?'var(--success-fg)':'var(--warn-fg)'};padding:0.75rem 1rem;border-radius:6px;">
+    <strong>得分：${correct}/3 (${pct}%)</strong><br>${feedback.join('<br>')}
+  </div>`;
+}
+</script>
+
+</body>
+</html>

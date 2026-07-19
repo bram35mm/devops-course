@@ -1,0 +1,255 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Lesson 0010 — Linux 系统管理进阶</title>
+<link rel="stylesheet" href="../assets/style.css">
+</head>
+<body>
+
+<h1>Lesson 0010：Linux 系统管理——从会用命令到能管服务器</h1>
+
+<p><a href="./0002-linux-cli-basics.html">← Lesson 0002</a> 教了你命令行基础。这节课把「会敲命令」升级到<strong>「能独立管理一台 Linux 服务器」</strong>——这是 DevOps 的日常。</p>
+
+<h2>1. 用户和权限管理</h2>
+
+<p>Lesson 0002 讲了单文件权限。现在讲<strong>系统级</strong>的用户管理。</p>
+
+<pre><code># 创建用户
+sudo useradd -m -s /bin/bash deployer    # -m=创建家目录 -s=指定shell
+sudo passwd deployer                      # 设密码
+
+# 查看用户信息
+id deployer                               # uid, gid, groups
+cat /etc/passwd | grep deployer           # 用户数据库
+# deployer:x:1001:1001::/home/deployer:/bin/bash
+#    ↑      ↑  ↑    ↑       ↑              ↑
+#  用户名  密码 uid gid   家目录           shell
+
+# 创建组 + 加人
+sudo groupadd devops
+sudo usermod -aG devops deployer         # -a=追加 -G=附加组（不加-a会覆盖）
+groups deployer                           # 验证
+
+# 删除用户
+sudo userdel -r deployer                 # -r=连家目录一起删</code></pre>
+
+<p><strong>三张关键文件：</strong></p>
+
+<table>
+  <tr><th>文件</th><th>内容</th><th>格式</th></tr>
+  <tr><td><code>/etc/passwd</code></td><td>用户列表</td><td><code>name:x:uid:gid:comment:home:shell</code></td></tr>
+  <tr><td><code>/etc/shadow</code></td><td>密码哈希</td><td>只有 root 可读</td></tr>
+  <tr><td><code>/etc/group</code></td><td>组列表</td><td><code>group:x:gid:members</code></td></tr>
+</table>
+
+<h3>sudo 配置</h3>
+
+<pre><code># 给 devops 组 sudo 权限（不用密码）
+sudo visudo -f /etc/sudoers.d/devops    # visudo 会做语法检查，永远用这个编辑
+# 加一行：
+%devops ALL=(ALL:ALL) NOPASSWD: ALL
+
+# 解析：%组名  在哪台机器=(以谁的身份:以哪个组) 是否需要密码: 允许的命令</code></pre>
+
+<h2>2. systemd 深入——写你自己的服务</h2>
+
+<p>Lesson 0002 讲了 <code>systemctl start/stop</code>。现在写一个自定义 systemd 服务——把你的 Node.js 应用变成系统服务。</p>
+
+<pre><code># /etc/systemd/system/myapp.service
+sudo tee /etc/systemd/system/myapp.service << 'EOF'
+[Unit]
+Description=My Node.js Application
+After=network.target              # 网络就绪后再启动
+
+[Service]
+Type=simple
+User=deployer
+WorkingDirectory=/opt/myapp
+ExecStart=/usr/bin/node server.js
+Restart=on-failure                # 崩溃后自动重启
+RestartSec=5                      # 等 5 秒再重启
+Environment=NODE_ENV=production
+EnvironmentFile=-/opt/myapp/.env  # - 前缀 = 文件不存在也不报错
+StandardOutput=journal            # 日志进 journald
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target        # 多用户模式（正常启动）时启动
+EOF
+
+sudo systemctl daemon-reload       # 重读所有 unit 文件
+sudo systemctl enable --now myapp  # 开机自启 + 立刻启动
+sudo systemctl status myapp
+journalctl -u myapp -f             # 看日志</code></pre>
+
+<table>
+  <tr><th>Restart 策略</th><th>行为</th></tr>
+  <tr><td><code>no</code></td><td>不重启（默认）</td></tr>
+  <tr><td><code>on-failure</code></td><td>退出码非 0 时重启（生产推荐）</td></tr>
+  <tr><td><code>always</code></td><td>任何退出都重启（包括正常退出）</td></tr>
+  <tr><td><code>on-abnormal</code></td><td>信号导致的退出才重启</td></tr>
+</table>
+
+<h2>3. 定时任务——cron</h2>
+
+<pre><code># crontab 语法：分 时 日 月 星期  命令
+# 编辑当前用户的 crontab
+crontab -e
+
+# 常用例子
+0 2 * * *    /opt/scripts/backup.sh           # 每天凌晨 2 点备份
+*/5 * * * *  /opt/scripts/health-check.sh     # 每 5 分钟健康检查
+0 0 1 * *    journalctl --vacuum-size=500M    # 每月 1 号清理日志
+@reboot      /opt/scripts/startup.sh          # 开机时执行
+
+# 系统级 cron（更规范）
+sudo tee /etc/cron.d/myapp << 'EOF'
+# 分 时 日 月 星期 用户  命令
+0 2 * * * deployer /opt/myapp/backup.sh
+EOF</code></pre>
+
+<div class="note">
+<strong>cron 的陷阱：</strong>cron 的环境变量非常少（没有 PATH 的那一套）。脚本里要写绝对路径（<code>/usr/bin/docker</code> 而不是 <code>docker</code>），或者在脚本开头 <code>PATH=/usr/local/bin:/usr/bin:/bin</code>。
+</div>
+
+<h2>4. 日志管理——logrotate</h2>
+
+<p>日志不管理会撑爆磁盘。logrotate 自动轮转、压缩、删除旧日志。</p>
+
+<pre><code># /etc/logrotate.d/myapp
+sudo tee /etc/logrotate.d/myapp << 'EOF'
+/var/log/myapp/*.log {
+    daily                   # 每天轮转
+    rotate 7                # 保留 7 个归档
+    compress                # 压缩旧日志
+    delaycompress           # 昨天的日志不压缩（可能还在写）
+    missingok               # 文件不存在不报错
+    notifempty              # 空的就不轮转
+    copytruncate            # 复制后清空（不重开文件，适合不响应信号的程序）
+}
+EOF
+
+# 测试配置
+sudo logrotate -d /etc/logrotate.d/myapp   # -d = dry run
+# 手动执行
+sudo logrotate -f /etc/logrotate.d/myapp</code></pre>
+
+<h2>5. 防火墙——ufw</h2>
+
+<pre><code># Ubuntu 默认防火墙
+sudo ufw status                  # 看状态
+sudo ufw enable                  # 开启
+sudo ufw default deny incoming   # 默认拒绝入站
+sudo ufw default allow outgoing  # 默认允许出站
+
+# 允许特定端口
+sudo ufw allow 22/tcp            # SSH
+sudo ufw allow 80,443/tcp        # HTTP + HTTPS
+sudo ufw allow from 10.0.0.0/24  # 允许整个子网
+
+# 删除规则
+sudo ufw status numbered
+sudo ufw delete 3                # 删第 3 条
+
+# 应用层防火墙
+sudo ufw allow 'Nginx Full'      # 用预定义的 profile
+sudo ufw app list                # 列出所有 profile</code></pre>
+
+<h2>6. 磁盘管理</h2>
+
+<pre><code># 查看磁盘和分区
+lsblk                           # 树状显示所有块设备
+sudo fdisk -l                   # 详细分区表
+
+# 挂载磁盘
+sudo mkdir -p /data
+sudo mount /dev/sdb1 /data
+# 永久挂载：加到 /etc/fstab
+echo "UUID=xxx-xxx /data ext4 defaults 0 2" | sudo tee -a /etc/fstab
+
+# 查看 UUID
+sudo blkid /dev/sdb1</code></pre>
+
+<h2>动手练习</h2>
+
+<p><strong>任务：</strong>把你 Lesson 0004 写的 Shell 脚本变成一个 systemd 定时任务。</p>
+
+<ol>
+  <li>在 <code>/tmp</code> 写一个脚本 <code>disk-monitor.sh</code>：当磁盘使用超过 80% 时输出警告</li>
+  <li>写一个 systemd service 文件和 timer 文件，让它每小时跑一次</li>
+  <li>用 <code>systemctl start</code> 触发一次，用 <code>journalctl</code> 验证输出</li>
+</ol>
+
+<pre><code># 提示：systemd timer 替代 cron
+# /etc/systemd/system/disk-monitor.service
+# /etc/systemd/system/disk-monitor.timer
+# timer 里 OnCalendar=hourly 表示每小时
+# 然后 systemctl enable --now disk-monitor.timer</code></pre>
+
+<h2>小测验</h2>
+
+<form id="quiz" onsubmit="return checkQuiz(event)">
+  <fieldset style="border:1px solid var(--border); border-radius:6px; padding:1rem; margin:1rem 0;">
+    <legend style="font-weight:600;">Q1：给用户追加一个附加组，命令是什么？</legend>
+    <label><input type="radio" name="q1" value="a"><code> usermod -g group user</code></label>
+    <label><input type="radio" name="q1" value="b"><code> usermod -aG group user</code></label>
+    <label><input type="radio" name="q1" value="c"><code> useradd -g group user</code></label>
+    <label><input type="radio" name="q1" value="d"><code> groupmod -u user group</code></label>
+  </fieldset>
+
+  <fieldset style="border:1px solid var(--border); border-radius:6px; padding:1rem; margin:1rem 0;">
+    <legend style="font-weight:600;">Q2：systemd service 文件中，生产环境推荐的 Restart 策略是？</legend>
+    <label><input type="radio" name="q2" value="a"><code> Restart=no</code></label>
+    <label><input type="radio" name="q2" value="b"><code> Restart=always</code></label>
+    <label><input type="radio" name="q2" value="c"><code> Restart=on-failure</code></label>
+    <label><input type="radio" name="q2" value="d"><code> Restart=on-abort</code></label>
+  </fieldset>
+
+  <fieldset style="border:1px solid var(--border); border-radius:6px; padding:1rem; margin:1rem 0;">
+    <legend style="font-weight:600;">Q3：编辑 sudo 配置必须用什么命令？为什么？</legend>
+    <label><input type="radio" name="q3" value="a"><code> nano /etc/sudoers</code> — 因为只有 nano 支持</label>
+    <label><input type="radio" name="q3" value="b"><code> visudo</code> — 因为会做语法检查，写错了不会锁死 sudo</label>
+    <label><input type="radio" name="q3" value="c"><code> vim /etc/sudoers</code> — 因为只有 vim 有语法高亮</label>
+    <label><input type="radio" name="q3" value="d"> 直接改 <code>/etc/sudoers</code> 就行</label>
+  </fieldset>
+
+  <button type="submit" style="background:var(--accent);color:#fff;border:none;padding:0.6rem 1.5rem;font-size:1rem;border-radius:6px;cursor:pointer;font-family:inherit;">检查答案</button>
+</form>
+
+<div id="quiz-result" style="margin-top:1rem;"></div>
+
+<h2>下一步</h2>
+
+<p><a href="./0011-linux-troubleshooting.html">Lesson 0011：Linux 排错实战 →</a>——出问题时你怎么找到根因？strace、lsof、tcpdump、性能分析。</p>
+
+<div class="note">
+课程路线：<a href="./0002-linux-cli-basics.html">0002 命令行基础</a> → <strong>0010 系统管理</strong> → 0011 排错实战 → 0012 网络基础 → 0013 网络实战 → 0014-0016 K8s
+</div>
+
+<div class="cite">
+<a href="./0009-monitoring.html">← Lesson 0009</a> · <a href="../reference/glossary.html">术语表</a> · <a href="../MISSION.md">Mission</a>
+</div>
+
+<script>
+function checkQuiz(e) {
+  e.preventDefault();
+  const answers = { q1: 'b', q2: 'c', q3: 'b' };
+  let correct = 0, feedback = [];
+  for (const [q, a] of Object.entries(answers)) {
+    const sel = document.querySelector(`input[name="${q}"]:checked`);
+    if (!sel) feedback.push(q + ': 未作答');
+    else if (sel.value === a) { correct++; feedback.push(q + ': ✓ 正确'); }
+    else feedback.push(q + ': ✗ 错误');
+  }
+  const pct = Math.round(correct/3*100);
+  const div = document.getElementById('quiz-result');
+  div.innerHTML = `<div style="background:${pct===100?'var(--success-bg)':'var(--warn-bg)'};color:${pct===100?'var(--success-fg)':'var(--warn-fg)'};padding:0.75rem 1rem;border-radius:6px;">
+    <strong>得分：${correct}/3 (${pct}%)</strong><br>${feedback.join('<br>')}
+  </div>`;
+}
+</script>
+
+</body>
+</html>
