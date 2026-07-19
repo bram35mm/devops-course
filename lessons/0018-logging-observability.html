@@ -1,0 +1,427 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Lesson 0018 — 日志系统：找到那根针</title>
+<link rel="stylesheet" href="../assets/style.css">
+</head>
+<body>
+
+<h1>Lesson 0018：日志系统——Prometheus 告诉你起火了，日志告诉你为什么</h1>
+
+<p>Lesson 0009 学了 Prometheus + Grafana 做<strong>指标监控</strong>——你知道 CPU 飙升了。但<strong>为什么</strong>飙升？哪个请求触发的？哪个函数不响应了？答案是日志。</p>
+
+<blockquote>
+<p><strong>Metrics（指标）</strong>告诉你<em>发生了什么</em>——"CPU 90%"<br>
+<strong>Logs（日志）</strong>告诉你<em>为什么发生</em>——"handling POST /api/upload, file=400MB.zip"</p>
+</blockquote>
+
+<p>两者是监控的左右手。缺一个，你就是在盲飞。</p>
+
+<h2>为什么需要集中式日志？</h2>
+
+<p>你现在查日志的方式：</p>
+
+<pre><code>ssh server1
+tail -f /var/log/nginx/access.log
+# Ctrl+C
+ssh server2
+tail -f /var/log/nginx/error.log
+# ... 已经过去 5 分钟了</code></pre>
+
+<p>问题：</p>
+<ul>
+  <li>容器重启日志就没了（Docker 默认 stdout 存在宿主机，容器删了就丢）</li>
+  <li>kubectl logs 只能看一个 Pod，没法跨 Pod 搜索</li>
+  <li>5 台服务器，出问题时不可能一台台 SSH 进去翻</li>
+</ul>
+
+<p>解决方案：<strong>集中式日志系统</strong>——所有服务器的日志汇集到一个地方，一个搜索框查全部。</p>
+
+<h2>Loki：轻量级日志系统</h2>
+
+<p>ELK（Elasticsearch + Logstash + Kibana）是最知名的日志方案。但 Elasticsearch 是内存怪兽——至少 4GB 起步。你的 2GB VPS 跑不动。</p>
+
+<p><strong>Loki</strong>（Grafana Labs 出品）是为云原生设计的轻量替代：</p>
+
+<table>
+  <tr><th>组件</th><th>作用</th><th>类比</th></tr>
+  <tr><td><strong>Promtail</strong></td><td>日志采集 agent，装在每台服务器/每个 Pod 上，收集日志发给 Loki</td><td>Node Exporter（但收日志而非指标）</td></tr>
+  <tr><td><strong>Loki</strong></td><td>日志存储和查询引擎，只索引元数据（标签），不索引日志全文→超省资源</td><td>Prometheus（但存日志而非指标）</td></tr>
+  <tr><td><strong>Grafana</strong></td><td>查询和可视化界面——你已经在 0009 里用了</td><td>同一个 Grafana，切到 Explore 页就能查日志</td></tr>
+</table>
+
+<pre><code>应用/Nginx/Docker  ──→  Promtail  ──→  Loki  ──→  Grafana Explore
+  (产生日志)          (采集+加标签)   (存储+查询)   (搜索+可视化)</code></pre>
+
+<div class="tip">
+Loki 的设计哲学：像 Prometheus 但用于日志。日志内容不索引（省空间），只索引标签（类似 Prometheus 的 labels）。查询时用标签缩小范围 + 暴力扫描匹配内容。
+</div>
+
+<h2>第一部分：部署 Loki + Promtail（15 分钟）</h2>
+
+<p>用 Docker Compose 在你的 VPS 上一键部署：</p>
+
+<pre><code>mkdir -p /opt/loki && cd /opt/loki
+
+# 1. Loki 配置
+cat > loki-config.yaml &lt;&lt; 'EOF'
+auth_enabled: false
+
+server:
+  http_listen_port: 3100
+
+ingester:
+  lifecycler:
+    ring:
+      kvstore:
+        store: inmemory
+      replication_factor: 1
+  chunk_idle_period: 5m
+  max_chunk_age: 1h
+
+schema_config:
+  configs:
+    - from: 2024-01-01
+      store: tsdb
+      object_store: filesystem
+      schema: v13
+      index:
+        prefix: loki_index_
+        period: 24h
+
+storage_config:
+  tsdb_shipper:
+    active_index_directory: /loki/tsdb-index
+    cache_location: /loki/tsdb-cache
+  filesystem:
+    directory: /loki/chunks
+EOF
+
+# 2. Promtail 配置——采集 Docker 容器的日志
+cat > promtail-config.yaml &lt;&lt; 'EOF'
+server:
+  http_listen_port: 9080
+  grpc_listen_port: 0
+
+clients:
+  - url: http://loki:3100/loki/api/v1/push    # 发给 Loki
+
+scrape_configs:
+  - job_name: docker
+    docker_sd_configs:
+      - host: unix:///var/run/docker.sock
+    relabel_configs:
+      - source_labels: [__meta_docker_container_name]
+        target_label: container
+      - source_labels: [__meta_docker_container_image]
+        target_label: image
+    pipeline_stages:                          # 解析时间戳
+      - docker: {}
+
+  - job_name: system
+    static_configs:
+      - targets: [localhost]
+        labels:
+          job: varlogs
+          __path__: /var/log/*.log
+EOF
+
+# 3. Docker Compose
+cat > docker-compose.yml &lt;&lt; 'EOF'
+services:
+  loki:
+    image: grafana/loki:latest
+    ports:
+      - "3100:3100"
+    volumes:
+      - ./loki-config.yaml:/etc/loki/local-config.yaml
+      - loki_data:/loki
+    command: -config.file=/etc/loki/local-config.yaml
+
+  promtail:
+    image: grafana/promtail:latest
+    volumes:
+      - ./promtail-config.yaml:/etc/promtail/config.yml
+      - /var/run/docker.sock:/var/run/docker.sock
+      - /var/log:/var/log:ro
+    command: -config.file=/etc/promtail/config.yml
+
+volumes:
+  loki_data:
+EOF
+
+docker compose up -d
+
+# 验证
+curl http://localhost:3100/ready
+# 输出: Ready</code></pre>
+
+<h2>第二部分：Grafana 查日志——和查 PromQL 一样的体验（10 分钟）</h2>
+
+<p>你已经在 0009 里部署了 Grafana。现在给它加上 Loki 数据源：</p>
+
+<pre><code># Grafana 加 Loki 数据源
+# 方法一：Web UI（推荐）
+# 打开 Grafana → Connections → Data sources → Add → Loki
+# URL: http://loki:3100
+# Save & test
+
+# 方法二：API（自动化用）
+curl -X POST http://admin:admin@localhost:3000/api/datasources \
+  -H 'Content-Type: application/json' \
+  -d '{"name":"Loki","type":"loki","url":"http://loki:3100","access":"proxy"}'</code></pre>
+
+<p>然后在 Grafana → <strong>Explore</strong> → 选 Loki 数据源 → 输入查询：</p>
+
+<pre><code>{container=~".*"}              # 查所有 Docker 容器的日志
+{container="nginx"}            # 只看 nginx 容器
+{container="app"} |= "error"   # app 容器日志中包含 "error" 的
+{container="app"} |= "POST" | json  # 解析 JSON 日志，提取字段</code></pre>
+
+<p>Loki 的查询语言叫 <strong>LogQL</strong>：<code>{标签选择器} | 过滤 | 解析</code>。语法类似 PromQL，学过 0009 的话上手只需要 5 分钟。</p>
+
+<h2>第三部分：结构化日志——让日志可搜索（10 分钟）</h2>
+
+<p>这是 DevOps 面试和实际工作中最关键的一个概念。</p>
+
+<p>糟糕的日志（你肯定写过）：</p>
+
+<pre><code>console.log("User " + userId + " logged in at " + new Date())
+// → "User 42 logged in at Sun Jul 19 2026 15:23:01"</code></pre>
+
+<p>问题：你想查"今天所有 userId=42 的操作"——做不到。你要正则匹配 <code>"User 42"</code>，漏掉所有换行、时间格式差异。</p>
+
+<p><strong>结构化日志</strong>：日志写成 JSON，每个字段都是可查询的维度：</p>
+
+<pre><code>console.log(JSON.stringify({
+  level: "info",
+  userId: 42,
+  action: "login",
+  ip: "1.2.3.4",
+  timestamp: new Date().toISOString(),
+  message: "User logged in"
+}))
+// → {"level":"info","userId":42,"action":"login","ip":"1.2.3.4","timestamp":"2026-07-19T07:23:01Z","message":"User logged in"}</code></pre>
+
+<p>然后在 Loki 里可以这样查：</p>
+
+<pre><code>{container="app"} | json | userId=42                           # 查所有 userId=42 的日志
+{container="app"} | json | level="error"                       # 只看错误
+{container="app"} | json | action="payment" | line_format "{{.message}}"  # 只看 payment 的消息</code></pre>
+
+<p>结构化日志 = 把日志从"需要 Ctrl+F"升级到"可以 SQL 查询"。</p>
+
+<div class="note">
+生产环境的日志三原则：<strong>1. 永远 JSON</strong>（不是纯文本）<strong>2. 永远带 level</strong>（debug/info/warn/error）<strong>3. 永远带 traceId</strong>（串联一次请求的所有日志）。这些是面试 + 实际工作的高频考点。
+</div>
+
+<h2>动手练习：让你的应用输出结构化日志</h2>
+
+<p><strong>任务：</strong>用 Docker Compose 起一个 Node.js 应用 + Loki + Promtail，在 Grafana 里搜到结构化日志。</p>
+
+<pre><code>cd /tmp && mkdir log-demo && cd log-demo
+
+# 1. Node.js 应用——输出结构化日志
+cat > server.js &lt;&lt; 'EOF'
+const http = require('http');
+
+function log(level, msg, extra = {}) {
+  const entry = {
+    level,
+    message: msg,
+    timestamp: new Date().toISOString(),
+    ...extra
+  };
+  console.log(JSON.stringify(entry));  // 注意：console.log 输出到 stdout
+}
+
+http.createServer((req, res) => {
+  log('info', 'request received', {
+    method: req.method,
+    path:   req.url,
+    userAgent: req.headers['user-agent']?.slice(0, 40)
+  });
+
+  if (req.url === '/error') {
+    log('error', 'simulated error', { path: '/error', code: 'E_SIMULATED' });
+    res.writeHead(500);
+    return res.end('Internal error');
+  }
+
+  res.writeHead(200, { 'Content-Type': 'text/plain' });
+  res.end('OK. Visit /error to trigger a log line.\n');
+}).listen(3000, () => log('info', 'server started', { port: 3000 }));
+EOF
+
+# 2. 极简 Dockerfile
+cat > Dockerfile &lt;&lt; 'EOF'
+FROM node:22-alpine
+WORKDIR /app
+COPY server.js .
+CMD ["node", "server.js"]
+EOF
+
+# 3. 本地 Docker Compose——加 Loki + Promtail
+cat > docker-compose.yml &lt;&lt; 'EOF'
+services:
+  app:
+    build: .
+    ports: ["3000:3000"]
+    container_name: log-demo-app
+
+  loki:
+    image: grafana/loki:latest
+    ports: ["3100:3100"]
+    volumes:
+      - ./loki-config.yaml:/etc/loki/local-config.yaml
+      - loki_data:/loki
+    command: -config.file=/etc/loki/local-config.yaml
+
+  promtail:
+    image: grafana/promtail:latest
+    volumes:
+      - ./promtail-config.yaml:/etc/promtail/config.yml
+      - /var/run/docker.sock:/var/run/docker.sock
+    command: -config.file=/etc/promtail/config.yml
+
+volumes:
+  loki_data:
+EOF
+
+# 4. Loki 配置（同上，简化版）
+cat > loki-config.yaml &lt;&lt; 'EOF'
+auth_enabled: false
+server: { http_listen_port: 3100 }
+ingester:
+  lifecycler: { ring: { kvstore: { store: inmemory }, replication_factor: 1 } }
+  chunk_idle_period: 5m
+schema_config:
+  configs:
+    - from: 2024-01-01
+      store: tsdb
+      object_store: filesystem
+      schema: v13
+      index: { prefix: loki_index_, period: 24h }
+storage_config:
+  tsdb_shipper: { active_index_directory: /loki/tsdb-index, cache_location: /loki/tsdb-cache }
+  filesystem: { directory: /loki/chunks }
+EOF
+
+cat > promtail-config.yaml &lt;&lt; 'EOF'
+server: { http_listen_port: 9080, grpc_listen_port: 0 }
+clients: [{ url: "http://loki:3100/loki/api/v1/push" }]
+scrape_configs:
+  - job_name: docker
+    docker_sd_configs: [{ host: "unix:///var/run/docker.sock" }]
+    relabel_configs:
+      - source_labels: [__meta_docker_container_name]
+        target_label: container
+EOF
+
+# 5. 启动
+docker compose up -d
+
+# 6. 产生一些日志
+curl http://localhost:3000
+curl http://localhost:3000/error
+curl http://localhost:3000?user=42
+# 多跑几次
+
+# 7. 在 Loki 里查（直接用 curl 调用 Loki API）
+curl -s 'http://localhost:3100/loki/api/v1/query_range' \
+  --data-urlencode 'query={container="log-demo-app"}' \
+  --data-urlencode 'limit=10' | python3 -m json.tool | head -40
+
+# 看到你的结构化日志了吗？每条都是 JSON，带着 level、method、path 等字段</code></pre>
+
+<div class="tip">
+<strong>你的任务：</strong>把上面的 log-demo 跑通，用 Loki API 查到 error 级别的日志。<br>
+<strong>加分题：</strong>如果 VPS 上已有 Grafana（0009 装的），加 Loki 数据源，在 Explore 里用 <code>{container="log-demo-app"} | json | level="error"</code> 搜到那条 error 日志。</div>
+
+<h2>Loki vs ELK——什么时候升级？</h2>
+
+<table>
+  <tr><th></th><th>Loki</th><th>ELK</th></tr>
+  <tr><td>适用场景</td><td>容器/云原生环境，配合 Prometheus</td><td>全文搜索需求强，日志量极巨大</td></tr>
+  <tr><td>资源消耗</td><td>~200MB 内存起步</td><td>4GB+ 内存起步</td></tr>
+  <tr><td>全文搜索</td><td>可以，但需要扫描（慢）</td><td>索引全文，秒级搜索</td></tr>
+  <tr><td>学习曲线</td><td>低（LogQL ≈ PromQL）</td><td>高（Elasticsearch DSL）</td></tr>
+</table>
+
+<p>结论：90% 的场景 Loki 够用。当你的日志量达到每天 TB 级、需要毫秒级全文搜索时，再考虑 ELK。</p>
+
+<h2>小测验</h2>
+
+<form id="quiz" onsubmit="return checkQuiz(event)">
+  <fieldset style="border:1px solid var(--border); border-radius:6px; padding:1rem; margin:1rem 0;">
+    <legend style="font-weight:600;">Q1：Metrics（指标）和 Logs（日志）的分工是什么？</legend>
+    <label><input type="radio" name="q1" value="a"> 指标更准确，日志不准确</label>
+    <label><input type="radio" name="q1" value="b"> 指标告诉你出了问题，日志告诉你具体原因</label>
+    <label><input type="radio" name="q1" value="c"> 没有区别，两者都是监控数据</label>
+    <label><input type="radio" name="q1" value="d"> 日志替代了指标</label>
+  </fieldset>
+
+  <fieldset style="border:1px solid var(--border); border-radius:6px; padding:1rem; margin:1rem 0;">
+    <legend style="font-weight:600;">Q2：Loki 相比 Elasticsearch 的核心设计差异是什么？</legend>
+    <label><input type="radio" name="q2" value="a"> Loki 更快</label>
+    <label><input type="radio" name="q2" value="b"> Loki 只索引标签（元数据），不索引日志全文，大幅节省资源</label>
+    <label><input type="radio" name="q2" value="c"> Loki 不需要配置文件</label>
+    <label><input type="radio" name="q2" value="d"> Loki 只能查看 Docker 日志</label>
+  </fieldset>
+
+  <fieldset style="border:1px solid var(--border); border-radius:6px; padding:1rem; margin:1rem 0;">
+    <legend style="font-weight:600;">Q3：结构化日志最重要的三个字段是？</legend>
+    <label><input type="radio" name="q3" value="a"> date, time, pid</label>
+    <label><input type="radio" name="q3" value="b"> level, traceId, 业务字段</label>
+    <label><input type="radio" name="q3" value="c"> hostname, ip, port</label>
+    <label><input type="radio" name="q3" value="d"> 所有字段都一样重要</label>
+  </fieldset>
+
+  <button type="submit" style="background:var(--accent);color:#fff;border:none;padding:0.6rem 1.5rem;font-size:1rem;border-radius:6px;cursor:pointer;font-family:inherit;">检查答案</button>
+</form>
+
+<div id="quiz-result" style="margin-top:1rem;"></div>
+
+<h2>推荐资源</h2>
+<ul>
+  <li><a href="https://grafana.com/docs/loki/latest/get-started/" target="_blank">Loki 官方 Get Started</a> — 5 分钟上手教程</li>
+  <li><a href="https://grafana.com/docs/loki/latest/query/" target="_blank">LogQL 查询语法</a> — 官方参考，建议收藏</li>
+  <li><a href="https://12factor.net/logs" target="_blank">12-Factor App: Logs</a> — "应用不应关心日志存储，把日志当事件流输出到 stdout"</li>
+</ul>
+
+<h2>下一步</h2>
+
+<p>下一课是课程体系的收尾：<strong>GitOps——ArgoCD（0019）</strong>。你会把 CI/CD（0006）+ K8s（0014–0016）+ Git（0003）串在一起，实现 Git push → 自动部署到 K8s 的完整自动化。</p>
+
+<div class="note">
+Logs + Metrics + Traces = 可观测性三支柱。你现在会了前两个（Prometheus + Loki）。Tracing（Jaeger/Tempo）留到进阶再学，面试和日常工作中 metrics + logs 已经覆盖 90% 的场景。
+</div>
+
+<div class="cite">
+<a href="./0017-ansible-config-mgmt.html">← Lesson 0017</a> · <a href="../reference/glossary.html">术语表</a> · <a href="../MISSION.md">Mission</a>
+</div>
+
+<script>
+function checkQuiz(e) {
+  e.preventDefault();
+  const answers = { q1: 'b', q2: 'b', q3: 'b' };
+  let correct = 0, feedback = [];
+  for (const [q, a] of Object.entries(answers)) {
+    const sel = document.querySelector(`input[name="${q}"]:checked`);
+    if (!sel) feedback.push(q + ': 未作答');
+    else if (sel.value === a) { correct++; feedback.push(q + ': ✓ 正确'); }
+    else feedback.push(q + ': ✗ 错误');
+  }
+  const pct = Math.round(correct/3*100);
+  const div = document.getElementById('quiz-result');
+  div.innerHTML = `<div style="background:${pct===100?'var(--success-bg)':'var(--warn-bg)'};color:${pct===100?'var(--success-fg)':'var(--warn-fg)'};padding:0.75rem 1rem;border-radius:6px;">
+    <strong>得分：${correct}/3 (${pct}%)</strong><br>${feedback.join('<br>')}
+    ${pct===100?'<br>🎉 全对！日志系统核心概念已掌握。':''}
+  </div>`;
+}
+</script>
+
+</body>
+</html>

@@ -1,0 +1,399 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Lesson 0019 — GitOps：Git 是唯一的真相来源</title>
+<link rel="stylesheet" href="../assets/style.css">
+</head>
+<body>
+
+<h1>Lesson 0019：GitOps——Git push 即部署</h1>
+
+<p>这是课程体系的最后一课，也是把你学过的三块拼在一起的那一课：</p>
+
+<pre><code>Git（0003）  +  CI/CD（0006）  +  Kubernetes（0014–0016）
+     ↓               ↓                    ↓
+     版本控制      自动构建镜像         容器编排
+     ↓               ↓                    ↓
+     └───────────────┴────────────────────┘
+                      ↓
+              GitOps = 三者合一</code></pre>
+
+<p>学完这课，你就能回答面试里最经典的一道进阶题：<strong>「从 git push 到 Pod 更新，中间发生了什么？」</strong></p>
+
+<h2>当前部署方式的问题</h2>
+
+<p>回忆你现在怎么部署 K8s 应用（0014–0016）：</p>
+
+<pre><code># 改代码 → 手动构建镜像 → 手动 push 到 registry → 手动 kubectl apply
+docker build -t myapp:v2 .
+docker push myapp:v2
+kubectl set image deployment/myapp app=myapp:v2</code></pre>
+
+<p>三个问题：</p>
+<ol>
+  <li><strong>手动操作</strong>——忘了 kubectl apply 就永远跑旧版本</li>
+  <li><strong>没人知道集群里跑的是什么</strong>——你同事昨天改了什么？谁改的？为什么？</li>
+  <li><strong>集群和 Git 不一致</strong>——有人直接 kubectl edit 改了一个副本数，Git 里的 YAML 还是旧的</li>
+</ol>
+
+<p>GitOps 的原则：<strong>Git 仓库是集群期望状态的唯一真相来源（Single Source of Truth）</strong>。集群里跑的任何东西，必须在 Git 里定义。任何对集群的手动修改，会被自动回滚。</p>
+
+<h2>GitOps 的核心循环</h2>
+
+<pre><code>              开发者 push 到 Git
+                     │
+                     ▼
+              CI（GitHub Actions）
+              构建镜像 + push 到 registry
+                     │
+                     ▼
+              更新 Git 里的 K8s YAML
+             （改 image tag）
+                     │
+                     ▼
+         ArgoCD 检测到 Git 变化
+                     │
+                     ▼
+         ArgoCD 对比 Git vs 集群
+         ┌─ 一致？什么都不做
+         └─ 不一致？自动 sync，把集群拉到和 Git 一样
+                     │
+                     ▼
+         Git = 期望状态  ←→  K8s 集群 = 实际状态
+                  ArgoCD 持续监控差异</code></pre>
+
+<h2>三个核心概念</h2>
+
+<table>
+  <tr><th>概念</th><th>是什么</th><th>类比</th></tr>
+  <tr><td><strong>Application（ArgoCD）</strong></td><td>ArgoCD 管理的一个 K8s 应用。包含 Git 仓库地址 + K8s 资源路径 + 目标集群</td><td>Terraform 的 Resource</td></tr>
+  <tr><td><strong>Sync（同步）</strong></td><td>把集群实际状态拉到 Git 声明的期望状态</td><td><code>terraform apply</code></td></tr>
+  <tr><td><strong>Drift（漂移）</strong></td><td>集群状态偏离了 Git——有人手动改了集群</td><td><code>terraform plan</code> 里的 diff</td></tr>
+</table>
+
+<div class="tip">
+GitOps 和 Terraform 的类比不是巧合。两者都是<strong>声明式 + 状态协调</strong>：Terraform 协调云资源，ArgoCD 协调 K8s 资源。如果你理解了 0008 的 plan → apply 流程，理解 GitOps 只需要换个对象（云资源 → K8s 资源）。
+</div>
+
+<h2>第一部分：在 k3s 上装 ArgoCD（10 分钟）</h2>
+
+<p>用你的 VPS 上的 k3s（如果没有，先跑 <code>curl -sfL https://get.k3s.io | sh -</code>）：</p>
+
+<pre><code># 1. 创建 argocd namespace
+kubectl create namespace argocd
+
+# 2. 安装 ArgoCD（官方一条命令）
+kubectl apply -n argocd -f https://raw.githubusercontent.com/argoproj/argo-cd/stable/manifests/install.yaml
+
+# 3. 等所有 Pod 就绪（约 1-2 分钟）
+kubectl wait --for=condition=ready pod --all -n argocd --timeout=300s
+
+# 4. ArgoCD 默认不暴露外部访问。用 port-forward 临时访问 Web UI
+kubectl port-forward svc/argocd-server -n argocd 8443:443 &
+# 打开 https://localhost:8443（自签名证书，点 Advanced → Proceed）
+
+# 5. 获取初始 admin 密码
+kubectl -n argocd get secret argocd-initial-admin-secret \
+  -o jsonpath="{.data.password}" | base64 -d
+echo
+
+# 6. 安装 argocd CLI（另一条途径，推荐）
+curl -sSL -o /tmp/argocd https://github.com/argoproj/argo-cd/releases/latest/download/argocd-linux-amd64
+sudo install -m 555 /tmp/argocd /usr/local/bin/argocd
+
+# 用 CLI 登录
+argocd login localhost:8443 --insecure --username admin --password $(kubectl -n argocd get secret argocd-initial-admin-secret -o jsonpath="{.data.password}" | base64 -d)
+</code></pre>
+
+<h2>第二部分：创建你的第一个 ArgoCD Application（15 分钟）</h2>
+
+<p>假设你有一个 K8s 应用，它的 YAML 存在 GitHub 仓库里。目录结构：</p>
+
+<pre><code># 你的应用仓库（比如 bram35mm/devops-course 的 k8s/ 目录）
+k8s/
+├── deployment.yaml
+├── service.yaml
+└── ingress.yaml</code></pre>
+
+<p>告诉 ArgoCD 去监控这个目录：</p>
+
+<pre><code># 方法一：CLI（最快）
+argocd app create demo-app \
+  --repo https://github.com/bram35mm/my-k8s-app.git \
+  --path k8s/ \
+  --dest-server https://kubernetes.default.svc \
+  --dest-namespace default \
+  --sync-policy auto \          # 自动同步（Git 变了就自动 apply）
+  --auto-prune \                # Git 里删了的 YAML，集群里也删
+  --self-heal                   # 有人手动改集群 → 自动修回 Git 的状态
+
+argocd app get demo-app         # 查看状态
+# Health: Healthy  |  Sync: Synced ← 期望的样子</code></pre>
+
+<pre><code># 方法二：Application YAML（IaC 风格——推荐生产使用）
+cat > argocd-app.yaml &lt;&lt; 'EOF'
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: demo-app
+  namespace: argocd
+spec:
+  project: default
+  source:
+    repoURL: https://github.com/bram35mm/my-k8s-app.git
+    targetRevision: main
+    path: k8s/
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: default
+  syncPolicy:
+    automated:
+      prune: true               # 自动删除不在 Git 里的资源
+      selfHeal: true            # 自动修复手动变更
+    syncOptions:
+      - CreateNamespace=true
+EOF
+
+kubectl apply -f argocd-app.yaml</code></pre>
+
+<h2>第三部分：完整 GitOps 流水线——从 git push 到 Pod 更新</h2>
+
+<p>这是 DevOps 面试必考的全链路流程。把 CI（0006）+ GitOps（本课）串起来：</p>
+
+<pre><code># 完整流程（5 步，每一步都是自动化的）：
+
+# Step 1: 开发者改代码 + push
+git add . && git commit -m "feat: add health check endpoint"
+git push
+
+# Step 2: GitHub Actions 触发 CI（0006 学的）
+#   .github/workflows/ci.yml:
+#     - 跑测试
+#     - docker build -t ghcr.io/bram35mm/myapp:$COMMIT_SHA
+#     - docker push ghcr.io/bram35mm/myapp:$COMMIT_SHA
+#     - 更新 k8s/deployment.yaml 里的 image tag
+#     - git commit + push 更新后的 YAML
+
+# Step 3: ArgoCD 每 3 分钟自动检测 Git 变化
+#   检测到 k8s/deployment.yaml 的 image tag 变了
+
+# Step 4: ArgoCD 对比 Git vs 集群 → 发现不一致
+#   Git:  image: ghcr.io/bram35mm/myapp:abc123
+#   集群: image: ghcr.io/bram35mm/myapp:def456
+#   → OutOfSync!
+
+# Step 5: ArgoCD 自动 sync
+#   kubectl apply 新的 deployment.yaml
+#   → Synced + Healthy</code></pre>
+
+<p>把这个流程写成 GitHub Actions Workflow（接在 0006 的 CI 后面）：</p>
+
+<pre><code># .github/workflows/deploy.yml
+name: Deploy to K8s via GitOps
+
+on:
+  push:
+    branches: [main]
+
+jobs:
+  build-and-push:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build Docker image
+        run: docker build -t ghcr.io/${{ github.repository }}:${{ github.sha }} .
+
+      - name: Push to GHCR
+        run: |
+          echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u ${{ github.actor }} --password-stdin
+          docker push ghcr.io/${{ github.repository }}:${{ github.sha }}
+
+      - name: Update image tag in K8s YAML
+        run: |
+          cd k8s
+          sed -i "s|image:.*|image: ghcr.io/${{ github.repository }}:${{ github.sha }}|" deployment.yaml
+          git config user.name "GitOps Bot"
+          git config user.email "bot@gitops"
+          git add deployment.yaml
+          git commit -m "deploy: update image to ${{ github.sha }}" || true
+          git push
+</code></pre>
+
+<p>这个 Workflow 做的事情：代码 push → 构建镜像 → 推送到 registry → 更新 Git 里的 YAML → ArgoCD 自动 sync 到集群。全程零手动操作。</p>
+
+<h2>动手练习：在自己的仓库上跑通 GitOps</h2>
+
+<p><strong>任务：</strong>给你已有的 K8s 应用（或 Lesson 0005 的 Docker demo）加上 ArgoCD 管理，实现 git push 自动部署。</p>
+
+<pre><code># 在你的 k3s 上（VPS 或本机）：
+
+# 1. 确认 ArgoCD 在跑
+kubectl get pods -n argocd
+
+# 2. 准备一个简单的 K8s 应用 YAML
+mkdir -p /tmp/gitops-demo/k8s
+cat > /tmp/gitops-demo/k8s/deployment.yaml &lt;&lt; 'EOF'
+apiVersion: apps/v1
+kind: Deployment
+metadata: { name: gitops-demo }
+spec:
+  replicas: 1
+  selector: { matchLabels: { app: gitops-demo } }
+  template:
+    metadata: { labels: { app: gitops-demo } }
+    spec:
+      containers:
+        - name: app
+          image: nginx:alpine
+          ports: [{ containerPort: 80 }]
+EOF
+
+cat > /tmp/gitops-demo/k8s/service.yaml &lt;&lt; 'EOF'
+apiVersion: v1
+kind: Service
+metadata: { name: gitops-demo }
+spec:
+  selector: { app: gitops-demo }
+  ports: [{ port: 80, targetPort: 80 }]
+EOF
+
+# 3. 推到 GitHub（如果你已经 fork/clone 了这个课程仓库，直接放进去）
+cd /tmp/gitops-demo
+git init && git add -A && git commit -m "k8s app for GitOps demo"
+# git remote add origin ... && git push
+
+# 4. 创建 ArgoCD Application，指向你的 GitHub 仓库
+argocd app create gitops-demo \
+  --repo https://github.com/YOUR_USER/YOUR_REPO.git \
+  --path k8s/ \
+  --dest-server https://kubernetes.default.svc \
+  --dest-namespace default \
+  --sync-policy auto \
+  --auto-prune \
+  --self-heal
+
+# 5. 验证
+argocd app get gitops-demo
+# 状态: Healthy + Synced
+
+# 6. 测试 self-heal：手动改集群，看 ArgoCD 修回去
+kubectl scale deployment gitops-demo --replicas=3
+# 等 3 分钟...
+kubectl get deployment gitops-demo
+# 又变回 1 了！ArgoCD 检测到漂移，自动修复了</code></pre>
+
+<div class="tip">
+<strong>你的任务：</strong>把这个 demo 跑通后，改成部署你自己的应用（用你之前 0005 里写的 Node.js app 的 Docker 镜像）。然后测试完整流程：改代码 → git push → GitHub Actions 构建新镜像 → 自动更新 YAML → ArgoCD 自动 sync → Pod 更新。<br>
+<strong>加分题：</strong>ArgoCD 的 sync wave——如果你的应用需要先部署数据库再部署应用，怎么控制顺序？（提示：argocd.argoproj.io/sync-wave annotation）
+</div>
+
+<h2>GitOps 面试速记</h2>
+
+<p>面试时被问到 GitOps，记住这四句话就够了：</p>
+
+<ol>
+  <li><strong>Git = 期望状态</strong>，集群 = 实际状态</li>
+  <li><strong>Pull model</strong>——ArgoCD 从集群内部拉取 Git 状态（不是 CI 从外部 push 到集群）</li>
+  <li><strong>Self-healing</strong>——手动改集群会被自动回滚</li>
+  <li><strong>Declarative</strong>——Application YAML 声明了 Git 仓库 + 路径 + 目标集群</li>
+</ol>
+
+<h2>小测验</h2>
+
+<form id="quiz" onsubmit="return checkQuiz(event)">
+  <fieldset style="border:1px solid var(--border); border-radius:6px; padding:1rem; margin:1rem 0;">
+    <legend style="font-weight:600;">Q1：GitOps 的核心主张是什么？</legend>
+    <label><input type="radio" name="q1" value="a"> CI 流水线直接 kubectl apply 到集群</label>
+    <label><input type="radio" name="q1" value="b"> Git 仓库是集群期望状态的唯一真相来源</label>
+    <label><input type="radio" name="q1" value="c"> 所有操作都必须用 CLI 执行</label>
+    <label><input type="radio" name="q1" value="d"> 放弃 Docker，全部用 Podman</label>
+  </fieldset>
+
+  <fieldset style="border:1px solid var(--border); border-radius:6px; padding:1rem; margin:1rem 0;">
+    <legend style="font-weight:600;">Q2：ArgoCD 的 "Drift Detection"（漂移检测）做了什么？</legend>
+    <label><input type="radio" name="q2" value="a"> 检测 Git 仓库是否被黑客入侵</label>
+    <label><input type="radio" name="q2" value="b"> 对比 Git 声明的期望状态和集群实际状态，发现不一致</label>
+    <label><input type="radio" name="q2" value="c"> 检测 Docker 镜像是否有安全漏洞</label>
+    <label><input type="radio" name="q2" value="d"> 检测网络延迟</label>
+  </fieldset>
+
+  <fieldset style="border:1px solid var(--border); border-radius:6px; padding:1rem; margin:1rem 0;">
+    <legend style="font-weight:600;">Q3：GitOps 使用 "Pull Model" 而不是 "Push Model" 的好处是什么？</legend>
+    <label><input type="radio" name="q3" value="a"> 速度更快</label>
+    <label><input type="radio" name="q3" value="b"> 集群不需要暴露外部端口，CI 不需要访问集群的 kubeconfig</label>
+    <label><input type="radio" name="q3" value="c"> 不需要 Git 仓库</label>
+    <label><input type="radio" name="q3" value="d"> 不需要 Docker</label>
+  </fieldset>
+
+  <button type="submit" style="background:var(--accent);color:#fff;border:none;padding:0.6rem 1.5rem;font-size:1rem;border-radius:6px;cursor:pointer;font-family:inherit;">检查答案</button>
+</form>
+
+<div id="quiz-result" style="margin-top:1rem;"></div>
+
+<h2>推荐资源</h2>
+<ul>
+  <li><a href="https://argo-cd.readthedocs.io/en/stable/getting_started/" target="_blank">ArgoCD 官方 Getting Started</a> — 从安装到第一个 Application 的完整教程</li>
+  <li><a href="https://opengitops.dev/" target="_blank">OpenGitOps 标准</a> — CNCF 定义的 GitOps 原则（4 条，5 分钟读完）</li>
+  <li><a href="https://github.com/argoproj/argo-cd" target="_blank">argoproj/argo-cd (GitHub)</a> — 源码 + 社区讨论</li>
+</ul>
+
+<h2>课程总结：你学完了全部 19 节课</h2>
+
+<p>回头看看你走过的路：</p>
+
+<pre><code>0001  什么是 DevOps？          ← 建立了坐标系
+0002  Linux 命令行基础          ← 学会了和服务器说话
+0003  Git 进阶                  ← 掌握了版本控制的深层用法
+0004  Shell 脚本编程            ← 自动化从脚本开始
+0005  Docker 入门               ← 容器化一切
+0006  CI/CD：GitHub Actions     ← 代码 push 自动构建测试
+0007  部署实战                  ← 把应用推到线上
+0008  IaC：Terraform            ← 基础设施写成代码
+0009  监控 & 可观测性           ← 知道系统在干什么
+0010  Linux 系统管理进阶        ← 能管服务器了
+0011  Linux 排错实战            ← 出问题能自己修
+0012  网络协议基础              ← 理解了 TCP/DNS/TLS
+0013  网络实战与负载均衡        ← 能配置生产级 Nginx
+0014  K8s 核心概念              ← 容器编排上路了
+0015  K8s 网络与配置            ← 深入 K8s 内部
+0016  K8s 生产实践              ← Helm + HPA + RBAC
+0017  Ansible：配置管理         ← 管 100 台服务器像管 1 台
+0018  日志系统                  ← Metrics + Logs 双支柱
+0019  GitOps：ArgoCD            ← Git push 即部署</code></pre>
+
+<p>从「前端开发，不懂 DevOps」到能搭 CI/CD + Docker + K8s + IaC + 监控 + 日志 + GitOps 的完整自动化平台——你做到了。</p>
+
+<div class="note">
+这不是终点。DevOps 工程师每天都会遇到新问题。你已经有了体系化的知识地图——当遇到新工具（Flux、Tekton、Crossplane）时，你会知道它在地图上的哪个位置。剩下的就是实践、面试、和在真实项目中把理论变肌肉记忆。<br><br>
+有问题随时在这个对话里问——我是你的 DevOps 老师。
+</div>
+
+<div class="cite">
+<a href="./0018-logging-observability.html">← Lesson 0018</a> · <a href="../reference/glossary.html">术语表</a> · <a href="../MISSION.md">Mission</a>
+</div>
+
+<script>
+function checkQuiz(e) {
+  e.preventDefault();
+  const answers = { q1: 'b', q2: 'b', q3: 'b' };
+  let correct = 0, feedback = [];
+  for (const [q, a] of Object.entries(answers)) {
+    const sel = document.querySelector(`input[name="${q}"]:checked`);
+    if (!sel) feedback.push(q + ': 未作答');
+    else if (sel.value === a) { correct++; feedback.push(q + ': ✓ 正确'); }
+    else feedback.push(q + ': ✗ 错误');
+  }
+  const pct = Math.round(correct/3*100);
+  const div = document.getElementById('quiz-result');
+  div.innerHTML = `<div style="background:${pct===100?'var(--success-bg)':'var(--warn-bg)'};color:${pct===100?'var(--success-fg)':'var(--warn-fg)'};padding:0.75rem 1rem;border-radius:6px;">
+    <strong>得分：${correct}/3 (${pct}%)</strong><br>${feedback.join('<br>')}
+    ${pct===100?'<br>🎉 全对！GitOps 核心概念已掌握。':''}
+  </div>`;
+}
+</script>
+
+</body>
+</html>

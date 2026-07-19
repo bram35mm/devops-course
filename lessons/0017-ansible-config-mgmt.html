@@ -1,0 +1,357 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Lesson 0017 — Ansible：服务器配置也写代码</title>
+<link rel="stylesheet" href="../assets/style.css">
+</head>
+<body>
+
+<h1>Lesson 0017：Ansible——管 100 台服务器像管 1 台</h1>
+
+<p>还记得 Lesson 0008 的 Terraform 吗？Terraform 管<strong>基础设施（服务器、网络、防火墙）</strong>的创建。这一课学 Ansible——管<strong>服务器内部（装软件、改配置、启服务）</strong>的配置。</p>
+
+<p>两者互补，合在一起才是完整的 IaC：</p>
+
+<pre><code>Terraform：创建服务器 + 安全组 + 网络     ← 基础设施层
+Ansible： 装 Docker + 配 Nginx + 部署应用  ← 配置管理层</code></pre>
+
+<h2>Ansible 为什么特别？</h2>
+
+<p>你之前用 Shell 脚本管服务器（0004/0010）：</p>
+
+<pre><code>ssh server1 "apt update && apt install -y nginx"
+ssh server2 "apt update && apt install -y nginx"
+ssh server3 "apt update && apt install -y nginx"</code></pre>
+
+<p>问题：10 台服务器、每台要装 5 个包、配置 3 个文件——脚本会变成几百行的意大利面条。而且跑第二遍时可能报错（nginx 已经装过了）。</p>
+
+<p>Ansible 的三条设计原则解决了这个问题：</p>
+
+<blockquote>
+<p><strong>Agentless（无 agent）</strong>——通过 SSH 连接，目标机器不用装任何东西<br>
+<strong>Idempotent（幂等）</strong>——跑一次和跑十次结果一样，不会重复安装<br>
+<strong>Declarative（声明式 YAML）</strong>——告诉 Ansible <em>要什么状态</em>，它自己算需要做什么</p>
+</blockquote>
+
+<h2>四个核心概念</h2>
+
+<table>
+  <tr><th>概念</th><th>是什么</th><th>类比</th></tr>
+  <tr><td><strong>Inventory（清单）</strong></td><td>你要管哪些机器</td><td>通讯录</td></tr>
+  <tr><td><strong>Playbook（剧本）</strong></td><td>在这些机器上做什么</td><td>Shell 脚本，但是 YAML</td></tr>
+  <tr><td><strong>Module（模块）</strong></td><td>具体执行的操作单元</td><td>npm 包 / 标准库函数</td></tr>
+  <tr><td><strong>Role（角色）</strong></td><td>可复用的配置包（给多台机器装同一套东西）</td><td>Docker 镜像</td></tr>
+</table>
+
+<h2>第一部分：安装并跑通第一台机器（15 分钟）</h2>
+
+<pre><code># 在你的 Ubuntu 机器上安装 Ansible
+sudo apt update && sudo apt install -y ansible
+ansible --version   # 验证安装
+
+# 最简单的 inventory：只管本机
+mkdir -p /tmp/ansible-demo && cd /tmp/ansible-demo
+cat > inventory.ini &lt;&lt; 'EOF'
+[webservers]
+localhost ansible_connection=local
+EOF
+
+# 第一个命令：ping 所有机器
+ansible all -i inventory.ini -m ping
+# 输出：localhost | SUCCESS => { "ping": "pong" }</code></pre>
+
+<p><code>ansible all -i inventory.ini -m ping</code> 的含义：对 <code>inventory.ini</code> 里的所有机器，执行 <code>ping</code> 模块。这就是 Ansible 的最简形式——一行命令管 1 台或 100 台。</p>
+
+<h2>第二部分：第一个 Playbook——装 Nginx（15 分钟）</h2>
+
+<p>Ad-hoc 命令适合一次性操作。重复执行的配置写成 Playbook：</p>
+
+<pre><code>cat > nginx-playbook.yml &lt;&lt; 'EOF'
+---
+- name: 安装并启动 Nginx          # Playbook 名
+  hosts: webservers                # 对 inventory 里的 webservers 组执行
+  become: yes                      # sudo 执行
+
+  tasks:                           # 任务列表，从上到下顺序执行
+    - name: 更新 apt 缓存
+      apt:
+        update_cache: yes
+        cache_valid_time: 3600     # 1 小时内不重复更新
+
+    - name: 安装 Nginx
+      apt:
+        name: nginx
+        state: present             # present = 确保已安装（幂等！）
+
+    - name: 确保 Nginx 在运行
+      service:
+        name: nginx
+        state: started             # 确保已启动
+        enabled: yes               # 开机自启
+
+    - name: 放一个自定义首页
+      copy:
+        content: "&lt;h1&gt;由 Ansible 管理&lt;/h1&gt;"
+        dest: /var/www/html/index.html
+        mode: '0644'
+EOF
+
+# 执行 Playbook
+ansible-playbook -i inventory.ini nginx-playbook.yml</code></pre>
+
+<p>关键点：<strong>幂等性</strong>。再跑一遍 <code>ansible-playbook</code>，输出会显示 <code>ok=4  changed=0</code>——四个 task 全部 skipped，因为状态已经正确了。这就是 Ansible 和 Bash 脚本的本质区别。</p>
+
+<table>
+  <tr><th>模块</th><th>作用</th><th>关键参数</th></tr>
+  <tr><td><code>apt</code></td><td>管理 Debian/Ubuntu 软件包</td><td><code>state: present/latest/absent</code></td></tr>
+  <tr><td><code>service</code></td><td>管理 systemd 服务</td><td><code>state: started/stopped/restarted</code>, <code>enabled: yes</code></td></tr>
+  <tr><td><code>copy</code></td><td>复制文件到目标机器</td><td><code>src/dest</code>, <code>mode</code></td></tr>
+  <tr><td><code>template</code></td><td>用 Jinja2 渲染模板后复制</td><td>同 copy + <code>{{变量}}</code></td></tr>
+  <tr><td><code>command/shell</code></td><td>执行任意命令（最后手段）</td><td>不幂等，尽量用专用模块</td></tr>
+</table>
+
+<h2>第三部分：变量和模板——学会用 Jinja2（10 分钟）</h2>
+
+<p>不同环境用不同配置？Ansible 用 Jinja2 模板 + 变量：</p>
+
+<pre><code># 1. 创建 Jinja2 模板
+cat > nginx.conf.j2 &lt;&lt; 'EOF'
+server {
+    listen {{ nginx_port }};
+    server_name {{ server_name }};
+    root /var/www/{{ app_name }};
+}
+EOF
+
+# 2. 在 Playbook 里用 template 模块 + 变量
+cat > deploy-app.yml &lt;&lt; 'EOF'
+---
+- name: 部署 Web 应用
+  hosts: webservers
+  become: yes
+
+  vars:                            # 变量定义
+    nginx_port: 8080
+    server_name: "{{ ansible_hostname }}"
+    app_name: myapp
+
+  tasks:
+    - name: 渲染 Nginx 配置
+      template:
+        src: nginx.conf.j2
+        dest: /etc/nginx/sites-available/{{ app_name }}
+      notify: reload nginx         # 配置变了才触发 handler
+
+  handlers:                        # handler = 被 notify 触发的 task
+    - name: reload nginx
+      service:
+        name: nginx
+        state: reloaded
+EOF
+
+ansible-playbook -i inventory.ini deploy-app.yml</code></pre>
+
+<div class="tip">
+<strong>handler 是什么？</strong>一种特殊 task，只有在被 <code>notify</code> 时才执行。如果模板没变化，handler 不触发——Nginx 不重启。这避免了每次跑 Playbook 都重启服务。
+</div>
+
+<h2>第四部分：实战——用 Ansible 管理你的 VPS</h2>
+
+<p>把学习环境从本机扩展到 VPS，这才是 DevOps 日常：</p>
+
+<pre><code># 1. 更新 inventory.ini，加上 VPS
+cat > inventory.ini &lt;&lt; 'EOF'
+[webservers]
+localhost ansible_connection=local
+vps ansible_host=YOUR_VPS_IP ansible_user=root
+EOF
+
+# 2. 验证连接（用 SSH key，免密码）
+ansible vps -i inventory.ini -m ping
+
+# 3. 写一个完整的 VPS 初始化 Playbook
+cat > init-vps.yml &lt;&lt; 'EOF'
+---
+- name: 初始化 VPS —— DevOps 基线配置
+  hosts: vps
+  become: yes
+
+  tasks:
+    - name: 安装基础包
+      apt:
+        name:
+          - htop
+          - vim
+          - curl
+          - git
+          - ufw
+          - fail2ban
+        state: present
+
+    - name: 开启 UFW 防火墙
+      ufw:
+        rule: allow
+        port: "{{ item }}"
+      loop: [22, 80, 443]           # loop = 对列表每个元素执行一次
+
+    - name: 启用 UFW
+      ufw:
+        state: enabled
+
+    - name: 配置时区
+      timezone:
+        name: Asia/Shanghai
+
+    - name: 确保 fail2ban 运行
+      service:
+        name: fail2ban
+        state: started
+        enabled: yes
+EOF
+
+ansible-playbook -i inventory.ini init-vps.yml</code></pre>
+
+<div class="note">
+Ansible 有 3000+ 内置模块——<code>apt</code>、<code>ufw</code>、<code>service</code>、<code>copy</code>、<code>template</code>、<code>docker_container</code>、<code>git</code>、<code>cron</code>……覆盖 DevOps 日常 95% 的操作。碰到不知道怎么做的，先查 <code>ansible-doc -l | grep 关键词</code>，大概率有现成的模块。
+</div>
+
+<h2>动手练习：用 Ansible 部署你的 Docker 应用</h2>
+
+<p><strong>任务：</strong>写一个 Playbook，在 VPS 上自动完成：装 Docker → 拉你的应用镜像 → 用 Docker Compose 启动。</p>
+
+<pre><code>cat > deploy-docker-app.yml &lt;&lt; 'EOF'
+---
+- name: Docker 化部署
+  hosts: vps
+  become: yes
+
+  tasks:
+    - name: 安装 Docker（官方脚本）
+      shell: curl -fsSL https://get.docker.com | sh
+      args:
+        creates: /usr/bin/docker      # 如果 docker 已存在就跳过
+
+    - name: 启动 Docker daemon
+      service:
+        name: docker
+        state: started
+        enabled: yes
+
+    - name: 把用户加入 docker 组
+      user:
+        name: "{{ ansible_user }}"
+        groups: docker
+        append: yes
+
+    - name: 安装 Docker Compose 插件
+      apt:
+        name: docker-compose-plugin
+        state: present
+
+    - name: 创建应用目录
+      file:
+        path: /opt/myapp
+        state: directory
+        mode: '0755'
+
+    - name: 上传 docker-compose.yml
+      copy:
+        src: ./docker-compose.yml
+        dest: /opt/myapp/docker-compose.yml
+
+    - name: 启动应用
+      docker_compose:
+        project_src: /opt/myapp
+        state: present                 # present = 确保在运行
+EOF
+
+# 先创建一个测试用的 docker-compose.yml
+cat > docker-compose.yml &lt;&lt; 'EOF'
+services:
+  web:
+    image: nginx:alpine
+    ports: ["8080:80"]
+EOF
+
+ansible-playbook -i inventory.ini deploy-docker-app.yml</code></pre>
+
+<div class="tip">
+<strong>你的任务：</strong>跑通上面的 Playbook 后，改成部署你自己的项目（比如之前 0005 课里的 Node.js 应用）。<br>
+<strong>加分题：</strong>把 Nginx 端口从 8080 改成变量，通过 <code>ansible-playbook -e "app_port=9090"</code> 传入。
+</div>
+
+<h2>小测验</h2>
+
+<form id="quiz" onsubmit="return checkQuiz(event)">
+  <fieldset style="border:1px solid var(--border); border-radius:6px; padding:1rem; margin:1rem 0;">
+    <legend style="font-weight:600;">Q1：Ansible 和 Terraform 的关系是什么？</legend>
+    <label><input type="radio" name="q1" value="a"> 都是做同一件事，选一个学就行</label>
+    <label><input type="radio" name="q1" value="b"> Terraform 管基础设施创建，Ansible 管服务器内部配置，两者互补</label>
+    <label><input type="radio" name="q1" value="c"> Ansible 替代了 Terraform</label>
+    <label><input type="radio" name="q1" value="d"> Terraform 替代了 Ansible</label>
+  </fieldset>
+
+  <fieldset style="border:1px solid var(--border); border-radius:6px; padding:1rem; margin:1rem 0;">
+    <legend style="font-weight:600;">Q2：Ansible 的"幂等性"是什么意思？</legend>
+    <label><input type="radio" name="q2" value="a"> Playbook 执行速度非常快</label>
+    <label><input type="radio" name="q2" value="b"> 只能在一台机器上执行</label>
+    <label><input type="radio" name="q2" value="c"> 跑一次和跑十次结果一样，不会重复操作</label>
+    <label><input type="radio" name="q2" value="d"> 必须用 root 执行</label>
+  </fieldset>
+
+  <fieldset style="border:1px solid var(--border); border-radius:6px; padding:1rem; margin:1rem 0;">
+    <legend style="font-weight:600;">Q3：Handler 和普通 Task 的区别是什么？</legend>
+    <label><input type="radio" name="q3" value="a"> Handler 并行执行，Task 串行</label>
+    <label><input type="radio" name="q3" value="b"> Handler 只在被 notify 时执行，Task 每次都执行</label>
+    <label><input type="radio" name="q3" value="c"> 没有区别，只是叫法不同</label>
+    <label><input type="radio" name="q3" value="d"> Handler 只在本机执行</label>
+  </fieldset>
+
+  <button type="submit" style="background:var(--accent);color:#fff;border:none;padding:0.6rem 1.5rem;font-size:1rem;border-radius:6px;cursor:pointer;font-family:inherit;">检查答案</button>
+</form>
+
+<div id="quiz-result" style="margin-top:1rem;"></div>
+
+<h2>推荐资源</h2>
+<ul>
+  <li><a href="https://docs.ansible.com/ansible/latest/getting_started/index.html" target="_blank">Ansible 官方 Getting Started</a> — 最高质量的入门指南</li>
+  <li><a href="https://docs.ansible.com/ansible/latest/collections/index_module.html" target="_blank">Ansible 模块索引</a> — 3000+ 模块的完整列表，按场景查</li>
+  <li><a href="https://github.com/ansible/ansible-examples" target="_blank">ansible/ansible-examples (GitHub)</a> — 官方示例 Playbook，覆盖常见运维场景</li>
+</ul>
+
+<h2>下一步</h2>
+
+<p>下一课学习<strong>日志系统（0018）</strong>——弥补监控（0009）的另外半条腿。学完你就能回答「监控看到 CPU 飙升，怎么查日志找到根因」。</p>
+
+<div class="note">
+Ansible 最怕的就是拼命写 <code>shell</code> 模块——那你只是在用 YAML 包装 Bash 脚本。先查 <code>ansible-doc -l</code> 找专用模块，99% 的情况都有现成的。
+</div>
+
+<div class="cite">
+<a href="./0016-k8s-production.html">← Lesson 0016</a> · <a href="../reference/glossary.html">术语表</a> · <a href="../MISSION.md">Mission</a>
+</div>
+
+<script>
+function checkQuiz(e) {
+  e.preventDefault();
+  const answers = { q1: 'b', q2: 'c', q3: 'b' };
+  let correct = 0, feedback = [];
+  for (const [q, a] of Object.entries(answers)) {
+    const sel = document.querySelector(`input[name="${q}"]:checked`);
+    if (!sel) feedback.push(q + ': 未作答');
+    else if (sel.value === a) { correct++; feedback.push(q + ': ✓ 正确'); }
+    else feedback.push(q + ': ✗ 错误');
+  }
+  const pct = Math.round(correct/3*100);
+  const div = document.getElementById('quiz-result');
+  div.innerHTML = `<div style="background:${pct===100?'var(--success-bg)':'var(--warn-bg)'};color:${pct===100?'var(--success-fg)':'var(--warn-fg)'};padding:0.75rem 1rem;border-radius:6px;">
+    <strong>得分：${correct}/3 (${pct}%)</strong><br>${feedback.join('<br>')}
+    ${pct===100?'<br>🎉 全对！Ansible 核心概念已掌握。':''}
+  </div>`;
+}
+</script>
+
+</body>
+</html>

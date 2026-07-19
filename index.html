@@ -55,6 +55,9 @@
   .pill-linux { background: #fef3c7; color: #92400e; }
   .pill-net { background: #d1fae5; color: #065f46; }
   .pill-k8s { background: #ede9fe; color: #5b21b6; }
+  .pill-ansible { background: #fce7f3; color: #9d174d; }
+  .pill-logs { background: #e0f2fe; color: #075985; }
+  .pill-gitops { background: #f0fdf4; color: #166534; }
   .flow-chart {
     background: var(--code-bg);
     border-radius: 8px;
@@ -74,13 +77,16 @@
 
 <h1>DevOps 从零到进阶 &nbsp;—&nbsp; 完整课程目录</h1>
 
-<p>16 节课，3 个阶段，覆盖 DevOps 面试和日常工作的全部基础 + 深入技能。</p>
+<p>19 节课，4 个阶段，覆盖 DevOps 面试和日常工作的全部基础 + 深入技能。</p>
 
 <div class="legend">
   <span><span class="pill pill-core">核心</span> 基础体系</span>
   <span><span class="pill pill-linux">Linux</span> 系统深入</span>
   <span><span class="pill pill-net">网络</span> 协议与实战</span>
   <span><span class="pill pill-k8s">K8s</span> 容器编排</span>
+  <span><span class="pill pill-ansible">Ansible</span> 配置管理</span>
+  <span><span class="pill pill-logs">日志</span> 可观测性</span>
+  <span><span class="pill pill-gitops">GitOps</span> 声明式部署</span>
 </div>
 
 <!-- ====== 课程依赖关系图 ====== -->
@@ -116,8 +122,14 @@
 <span class="accent">0014</span> K8s 核心概念 ←─ Docker(0005) + 部署(0007)
   │
 <span class="accent">0015</span> K8s 网络与配置
+<span class="accent">0016</span> K8s 生产实践
   │
-<span class="accent">0016</span> K8s 生产实践</div>
+<span class="dim">阶段二 · Stage 4：配置管理与 GitOps</span>
+<span class="accent">0017</span> Ansible 配置管理 ←─ Linux(0002) + Shell(0004) + IaC(0008)
+  │
+<span class="accent">0018</span> 日志系统 ←─────────── 监控(0009)
+  │
+<span class="accent">0019</span> GitOps：ArgoCD ←─── Git(0003) + CI/CD(0006) + K8s(0014-0016)</div>
 
 
 <!-- ====== 阶段一 ====== -->
@@ -180,14 +192,14 @@
   <span class="num pill pill-core">0008</span>
   <span class="title">IaC：Terraform</span>
   <div class="desc">Provider、Resource、State、Plan/Apply。HCL 语法。实战：用 Terraform 管 Docker 容器。</div>
-  <div class="prereq">前置：0005（Docker）→ 后续：独立模块</div>
+  <div class="prereq">前置：0005（Docker）→ 后续：0017</div>
 </a>
 
 <a class="lesson-card" href="lessons/0009-monitoring.html">
   <span class="num pill pill-core">0009</span>
   <span class="title">监控 & 可观测性</span>
   <div class="desc">Prometheus + Grafana + Node Exporter。PromQL、告警规则、RED/USE 方法。实战：10 分钟搭监控栈。</div>
-  <div class="prereq">前置：0005（Docker）→ 后续：0016</div>
+  <div class="prereq">前置：0005（Docker）→ 后续：0016 / 0018</div>
 </a>
 
 </ul>
@@ -266,12 +278,43 @@
   <span class="num pill pill-k8s">0016</span>
   <span class="title">K8s 生产实践</span>
   <div class="desc">Helm（包管理器）、HPA（自动扩缩容）、RBAC（权限控制）、K8s 监控集成（Prometheus Stack）、安全清单。</div>
-  <div class="prereq">前置：0015 + 0009（监控）→ 后续：结业项目</div>
+  <div class="prereq">前置：0015 + 0009（监控）→ 后续：0019</div>
 </a>
 
 </ul>
 </div>
 
+
+<!-- ====== 阶段二：Stage 4 ====== -->
+<div class="phase">
+<h2>阶段二 · Stage 4：配置管理与 GitOps（3 节）</h2>
+<p class="subtitle">补齐 IaC 的另一半（配置管理）+ 可观测性的另一半（日志）+ K8s 部署的终极形态（GitOps）。</p>
+
+<ul class="lesson-list">
+
+<a class="lesson-card" href="lessons/0017-ansible-config-mgmt.html">
+  <span class="num pill pill-ansible">0017</span>
+  <span class="title">Ansible：配置管理</span>
+  <div class="desc">Inventory、Playbook、Module、幂等性、Jinja2 模板、Handler。实战：用 Ansible 初始化 VPS 并部署 Docker 应用。</div>
+  <div class="prereq">前置：0002（Linux）+ 0004（Shell）+ 0008（IaC）→ 后续：0018</div>
+</a>
+
+<a class="lesson-card" href="lessons/0018-logging-observability.html">
+  <span class="num pill pill-logs">0018</span>
+  <span class="title">日志系统：Loki + Promtail</span>
+  <div class="desc">Metrics + Logs = 可观测性双支柱。Loki 轻量级日志聚合、LogQL 查询、结构化日志（JSON）、与 Grafana 集成。</div>
+  <div class="prereq">前置：0002（Linux）+ 0009（监控）→ 后续：0019</div>
+</a>
+
+<a class="lesson-card" href="lessons/0019-gitops-argocd.html">
+  <span class="num pill pill-gitops">0019</span>
+  <span class="title">GitOps：ArgoCD</span>
+  <div class="desc">Git 作为集群唯一真相来源。ArgoCD Application、Sync、Drift Detection、Self-healing。完整 CI → GitOps → K8s 自动化链路。</div>
+  <div class="prereq">前置：0003（Git）+ 0006（CI/CD）+ 0014–0016（K8s）→ 后续：结业项目</div>
+</a>
+
+</ul>
+</div>
 <!-- ====== 参考文档 ====== -->
 <h2>参考文档</h2>
 <ul>
@@ -282,7 +325,7 @@
 </ul>
 
 <div class="cite">
-  共 16 节课 · 4 个参考文档 · <a href="MISSION.md">Mission</a>
+  共 19 节课 · 4 个参考文档 · <a href="MISSION.md">Mission</a>
 </div>
 
 </body>

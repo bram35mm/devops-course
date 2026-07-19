@@ -187,6 +187,34 @@
   <dd>一组可复用的 Terraform 资源配置，相当于「函数」。封装常见模式（如「一个 VPC + 子网 + 安全组」），通过输入变量参数化。</dd>
 </dl>
 
+<h2>Ansible / 配置管理</h2>
+
+<dl>
+  <dt>Ansible</dt>
+  <dd>Red Hat 出品的配置管理工具。Agentless（仅需 SSH），用 YAML 写 Playbook，声明式定义服务器应达到的状态。与 Terraform 互补：Terraform 创建基础设施，Ansible 配置服务器内部。具备幂等性——重复执行不会导致重复操作。</dd>
+
+  <dt>Inventory（清单）</dt>
+  <dd>Ansible 的「通讯录」——列出要管理哪些机器（主机名/IP + 分组）。支持静态文件（INI/YAML）和动态生成（从 AWS/GCP 查询）。</dd>
+
+  <dt>Playbook（剧本）</dt>
+  <dd>Ansible 的执行单元，YAML 文件定义一组 Task（任务），按顺序在指定主机上执行。相当于声明式版本的 Shell 脚本。</dd>
+
+  <dt>Idempotency（幂等性）</dt>
+  <dd>Ansible 的核心属性：同一个 Playbook 执行多次，结果相同。如果目标状态已满足，Task 自动跳过。与 Bash 脚本「每次跑都可能有副作用」形成对比。</dd>
+
+  <dt>Module（模块）</dt>
+  <dd>Ansible 的原子操作单元（如 <code>apt</code>、<code>service</code>、<code>copy</code>、<code>template</code>、<code>docker_container</code>）。3000+ 内置模块覆盖 DevOps 日常 95% 的操作。永远优先用专用模块而非 <code>shell</code> 模块。</dd>
+
+  <dt>Handler</dt>
+  <dd>Ansible 的特殊 Task，只在被 <code>notify</code> 通知时才执行。典型场景：Nginx 配置文件变化时才重启 Nginx，配置没变就不重启。减少不必要的服务中断。</dd>
+
+  <dt>Jinja2</dt>
+  <dd>Python 模板引擎，Ansible 用它做变量替换和条件渲染。在 <code>.j2</code> 模板文件中使用 <code>{{ variable }}</code> 和 <code>{% if %}</code> 等语法，生成配置文件。</dd>
+
+  <dt>Role（角色）</dt>
+  <dd>Ansible 的可复用配置包。将 Task、变量、模板、Handler 按约定目录结构组织。相当于「装一套东西的模板」，如 nginx-role、docker-role。</dd>
+</dl>
+
 <h2>监控 & 告警</h2>
 
 <dl>
@@ -244,6 +272,28 @@
   <dd>开源的数据可视化和仪表盘平台。通常与 Prometheus 配合使用。</dd>
 </dl>
 
+<h2>日志系统</h2>
+
+<dl>
+  <dt>Loki</dt>
+  <dd>Grafana Labs 出品的轻量级日志聚合系统，CNCF 项目。设计哲学：像 Prometheus 但用于日志——只索引元数据标签，不索引日志全文，大幅节省资源（~200MB 内存起步）。适合容器和云原生环境。</dd>
+
+  <dt>Promtail</dt>
+  <dd>Loki 的日志采集 agent。部署在每台服务器或每个节点上，tail 日志文件或通过 Docker socket 采集容器日志，加标签后推送给 Loki。相当于日志版的 Node Exporter。</dd>
+
+  <dt>LogQL</dt>
+  <dd>Loki Query Language，Loki 的查询语言。语法：<code>{label="value"} | filter | parser</code>，类似 PromQL。如 <code>{container="app"} |= "error" | json</code>。</dd>
+
+  <dt>Structured Logging（结构化日志）</dt>
+  <dd>将日志输出为 JSON 格式而非纯文本，每个字段（level、timestamp、userId、traceId 等）都是可查询的维度。生产环境三原则：1. 永远 JSON 2. 永远带 level 3. 永远带 traceId。</dd>
+
+  <dt>ELK Stack</dt>
+  <dd>Elasticsearch + Logstash + Kibana 的简称。最知名的集中式日志方案，功能强大但资源消耗高（4GB+ 内存起步）。适合日志量极大且需要毫秒级全文搜索的场景。</dd>
+
+  <dt>Log Level（日志级别）</dt>
+  <dd>日志严重性分级。标准级别（从低到高）：DEBUG（调试）→ INFO（一般信息）→ WARN（警告）→ ERROR（错误）→ FATAL（致命）。生产环境通常只输出 INFO 及以上。</dd>
+</dl>
+
 <h2>版本控制 & 协作</h2>
 
 <dl>
@@ -276,6 +326,31 @@
 
   <dt>Conventional Commits</dt>
   <dd>约定式提交。一种 commit message 规范：<code>type(scope): description</code>（如 <code>feat(auth): add login</code>）。有利于自动化生成 changelog 和版本号。</dd>
+</dl>
+
+<h2>GitOps</h2>
+
+<dl>
+  <dt>GitOps</dt>
+  <dd>CNCF 定义的部署模式：将 Git 仓库作为集群期望状态的唯一真相来源（Single Source of Truth）。任何对集群的手动修改都会被自动回滚。核心原则：声明式（Git 里的 YAML 定义一切）、版本化（所有变更可追溯、可回滚）、自动化（Git 变了集群自动同步）。</dd>
+
+  <dt>ArgoCD</dt>
+  <dd>CNCF 毕业项目，GitOps 的事实标准实现。部署在 K8s 集群内部，持续监控 Git 仓库变化并自动同步到集群。核心概念：Application（定义一个 Git 仓库 + K8s 资源路径 + 目标集群）、Sync（拉集群到 Git 期望状态）。</dd>
+
+  <dt>Sync（同步）</dt>
+  <dd>ArgoCD 的核心操作：将 K8s 集群的实际状态拉到 Git 声明的期望状态。支持手动触发和自动同步（检测到 Git 变化即触发）。同步状态：Synced（一致）、OutOfSync（不一致）。</dd>
+
+  <dt>Drift Detection（漂移检测）</dt>
+  <dd>ArgoCD 每 3 分钟对比 Git 期望状态和集群实际状态。发现不一致（如有人手动 kubectl edit 改了副本数）→ 标记 OutOfSync → 自动或手动修复。这是 GitOps 区别于传统 CI/CD push model 的关键特性。</dd>
+
+  <dt>Self-healing（自愈）</dt>
+  <dd>ArgoCD 的自动修复能力。开启后，任何对集群的手动修改都会被自动回滚到 Git 声明的状态。例如：手动 scale replicas=10 → 几分钟后自动改回 Git 里的 replicas=3。</dd>
+
+  <dt>Pull Model vs Push Model</dt>
+  <dd>GitOps 使用 Pull Model（集群内部主动拉取 Git 状态），而非 Push Model（CI 从外部推送变更到集群）。好处：集群无需暴露 kubeconfig，CI 不需要访问集群，安全性更高。</dd>
+
+  <dt>Application（ArgoCD）</dt>
+  <dd>ArgoCD 管理的单元。一个 YAML 文件声明了：Git 仓库 URL + K8s 资源路径 + 目标集群 + 同步策略。等价于「把 Git 的哪个目录，同步到哪个集群的哪个 namespace」。</dd>
 </dl>
 
 <div class="cite">
