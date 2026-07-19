@@ -434,6 +434,59 @@
 </dl>
 </dl>
 
+
+<h2>GitHub 协作 & 发布</h2>
+
+<dl>
+  <dt>Issue</dt>
+  <dd>GitHub 的项目管理单元——不只是 bug 报告器。Label 分类、Milestone 按版本分组、Assignee 指派负责人、Projects 看板视图。DevOps 团队也用 Issue 追踪基础设施变更。</dd>
+
+  <dt>Pull Request (PR)</dt>
+  <dd>代码变更的最小协作单元。包含 diff 对比、讨论线程、CI 检查结果、审批状态。合并后关联的 Issue 自动关闭（<code>Closes #N</code>）。</dd>
+
+  <dt>Branch Protection（分支保护）</dt>
+  <dd>GitHub 仓库的 gates（门禁）。规则包括：必须走 PR、必须 N 人审批、必须 CI 通过（Require status checks）、必须解决所有讨论。<strong>这是 CI/CD 和 Git 工作流的连接点。</strong></dd>
+
+  <dt>CODEOWNERS</dt>
+  <dd><code>.github/CODEOWNERS</code> 文件。定义「谁拥有哪些代码的审查权」——当有人修改匹配文件时，对应的 owner 自动被设为 PR Reviewer。</dd>
+
+  <dt>Semantic Versioning (SemVer, 语义化版本)</dt>
+  <dd>版本号命名规范 2.0.0：MAJOR.MINOR.PATCH。MAJOR = 不兼容变更，MINOR = 向后兼容新功能，PATCH = 向后兼容 bug 修复。一旦发布不可修改。</dd>
+
+  <dt>Git Tag（annotated）</dt>
+  <dd>指向特定 commit 的不可变引用。Annotated tag（<code>git tag -a v1.0.0 -m "..."</code>）包含 tagger、日期、message，可 GPG 签名——<strong>永远用 annotated，不用 lightweight。</strong></dd>
+
+  <dt>GitHub Release</dt>
+  <dd>基于 git tag 的发布单元。包含 release notes（可自动生成）、可下载的二进制/assets、预发布标记。Tag push 可以触发 CI/CD 自动创建 Release。</dd>
+
+  <dt>CHANGELOG.md</dt>
+  <dd>给人看的版本日志。keepachangelog.com 格式：Added / Changed / Deprecated / Removed / Fixed / Security 六大分类，每个版本标注日期。</dd>
+
+  <dt>Conventional Commits（约定式提交）</dt>
+  <dd>标准化 commit message 格式：<code>type(scope): description</code>。<code>feat:</code>→MINOR, <code>fix:</code>→PATCH, <code>feat!:</code>或含<code>BREAKING CHANGE:</code>→MAJOR。配合 semantic-release 实现全自动版本发布。</dd>
+
+  <dt>semantic-release</dt>
+  <dd>自动化发布工具。分析 Conventional Commits → 自动决定版本号 → 生成 CHANGELOG → 创建 git tag → 创建 GitHub Release → 发布到包管理器。零手动操作。</dd>
+
+  <dt>Community Health Files</dt>
+  <dd>GitHub 自动识别的仓库「健康文件」：README、LICENSE、CONTRIBUTING、CODE_OF_CONDUCT、SECURITY、SUPPORT。在 Insights → Community 查看完整度评分。</dd>
+
+  <dt>LICENSE（许可证）</dt>
+  <dd>没有许可证的公开仓库 = 保留所有权利，别人不能合法使用。MIT（最宽松）、Apache 2.0（MIT + 专利保护，K8s/Terraform 用）、GPL（Copyleft，用了就必须开源）。</dd>
+
+  <dt>GitHub Discussions</dt>
+  <dd>仓库的社区论坛——Issue 是待办任务，Discussion 是开放式对话。支持 Q&A（可标记 Accepted Answer）、Ideas、Announcements、General。</dd>
+
+  <dt>GitHub Pages</dt>
+  <dd>把仓库的 <code>docs/</code> 目录或 <code>gh-pages</code> 分支发布为静态网站（<code>https://user.github.io/repo</code>）。适合项目文档站。支持 GitHub Actions 自动部署。</dd>
+
+  <dt>.github Repository</dt>
+  <dd>组织下的特殊仓库（<code>myorg/.github</code>）。里面的 Community Health Files 和 Issue/PR 模板会作为<strong>所有组织仓库的默认值</strong>——避免每个仓库复制粘贴。</dd>
+
+  <dt>BDFL（Benevolent Dictator for Life）</dt>
+  <dd>「仁慈的终身独裁者」——开源治理模型。一个人（通常是项目创始人）对重大决策有最终决定权。Linux（Linus）、Python 早期（Guido）都是 BDFL 模型。</dd>
+</dl>
+
 <div class="cite">
 <a href="../lessons/0001-what-is-devops.html">← Lesson 0001</a> · 术语会随课程持续更新
 </div>

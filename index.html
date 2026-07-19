@@ -61,6 +61,7 @@
 .pill-cloud { background: #fce4ec; color: #880e4f; }
 .pill-security { background: #fff3e0; color: #e65100; }
 .pill-database { background: #e8eaf6; color: #283593; }
+.pill-github { background: #f1f8e9; color: #33691e; }
   .flow-chart {
     background: var(--code-bg);
     border-radius: 8px;
@@ -79,8 +80,7 @@
 <body>
 
 <h1>DevOps 从零到进阶 &nbsp;—&nbsp; 完整课程目录</h1>
-
-<p>22 节课，5 个阶段，覆盖 DevOps 面试和日常工作的全部基础 + 深入技能。</p>
+<p>25 节课，5 个阶段 + GitHub 专项，覆盖 DevOps 面试和日常工作的全部基础 + 深入技能。</p>
 
 <div class="legend">
   <span><span class="pill pill-core">核心</span> 基础体系</span>
@@ -93,6 +93,7 @@
   <span><span class="pill pill-cloud">云平台</span> 基础设施</span>
   <span><span class="pill pill-security">安全</span> DevSecOps</span>
   <span><span class="pill pill-database">数据库</span> 运维</span>
+  <span><span class="pill pill-github">GitHub</span> 协作发布</span>
 </div>
 
 <!-- ====== 课程依赖关系图 ====== -->
@@ -141,8 +142,15 @@
 <span class="accent">0020</span> 云平台实操 ←─────── 部署(0007) + IaC(0008)
   │
 <span class="accent">0021</span> DevSecOps ←───────── CI/CD(0006) + Docker(0005) + K8s(0014-0016)
+<span class="accent">0022</span> 数据库运维 ←─────── Linux(0002) + CI/CD(0006)
   │
-<span class="accent">0022</span> 数据库运维 ←─────── Linux(0002) + CI/CD(0006)</div>
+<span class="dim">GitHub 专项：协作发布三连（按顺序学）</span>
+<span class="accent">0023</span> GitHub 协作 ←─────── Git(0003) + CI/CD(0006)
+  │
+<span class="accent">0024</span> 版本发布 ←───────── 协作(0023)
+  │
+<span class="accent">0025</span> 开源维护 ←───────── 发布(0024)</div>
+
 
 
 <!-- ====== 阶段一 ====== -->
@@ -359,6 +367,38 @@
 
 </ul>
 </div>
+
+<!-- ====== GitHub 专项 ====== -->
+<div class="phase">
+<h2>GitHub 专项：协作发布三连（3 节）<span style="font-size:0.7rem;color:var(--accent);margin-left:0.5em;">NEW</span></h2>
+<p class="subtitle">填补 Git 操作（0003）和 CI/CD（0006）之间的平台协作层：Issues / PR / Code Review → SemVer / Releases / Changelog → 开源项目维护。</p>
+
+<ul class="lesson-list">
+
+<a class="lesson-card" href="lessons/0023-github-collaboration.html">
+  <span class="num pill pill-github">0023</span>
+  <span class="title">GitHub 协作：Issues、PR、Code Review</span>
+  <div class="desc">Issues 项目管理（Label/Milestone/Projects）、PR 生命周期、Branch Protection 门禁、CODEOWNERS。DevOps 的核心协作技能。</div>
+  <div class="prereq">前置：0003（Git 进阶）+ 0006（CI/CD）→ 后续：0024</div>
+</a>
+
+<a class="lesson-card" href="lessons/0024-semver-releases.html">
+  <span class="num pill pill-github">0024</span>
+  <span class="title">版本发布：SemVer、Tags、Releases、Changelog</span>
+  <div class="desc">SemVer 2.0.0 规则、git tag（annotated）、GitHub Releases（自动生成 + Assets）、keepachangelog 格式、Conventional Commits + semantic-release 自动化。</div>
+  <div class="prereq">前置：0023（GitHub 协作）→ 后续：0025</div>
+</a>
+
+<a class="lesson-card" href="lessons/0025-open-source-maintenance.html">
+  <span class="num pill pill-github">0025</span>
+  <span class="title">开源项目维护：社区治理、模板、Pages</span>
+  <div class="desc">Community Health Files（CONTRIBUTING/CODE_OF_CONDUCT/SECURITY）、LICENSE 选择、.github 仓库、Discussions/Pages、治理模型。</div>
+  <div class="prereq">前置：0024（版本发布）→ 后续：结业项目</div>
+</a>
+
+</ul>
+</div>
+
 <!-- ====== 参考文档 ====== -->
 <h2>参考文档</h2>
 <ul>
@@ -368,8 +408,7 @@
   <li><a href="MISSION.md">学习目标（MISSION.md）</a> — 你的 DevOps 转型目标</li>
 </ul>
 
-<div class="cite">
-  共 22 节课 · 4 个参考文档 · <a href="MISSION.md">Mission</a>
+  共 25 节课 · 4 个参考文档 · <a href="MISSION.md">Mission</a>
 </div>
 
 </body>

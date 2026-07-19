@@ -1,0 +1,329 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Lesson 0025 — 开源项目维护：社区治理、模板、GitHub Pages</title>
+<link rel="stylesheet" href="../assets/style.css">
+</head>
+<body>
+
+<h1>Lesson 0025：开源项目维护——从个人仓库到社区项目</h1>
+
+<p>前两节你学会了 PR 协作流程（0023）和版本发布体系（0024）。这节课讲最后一层：<strong>如何把一个仓库变成一个健康的、可持续的开源项目</strong>——或者退一步，把你团队的内部工具仓库管理得像开源项目一样规范。</p>
+
+<p>为什么 DevOps 要学这个？你们团队的 Terraform 模块仓库、Ansible playbook 仓库、内部 CLI 工具——本质上都是「有用户、有贡献者、需要文档和规范」的项目。开源社区的治理实践直接复用。</p>
+
+<h2>1. Community Health Files —— 社区健康文件</h2>
+
+<p>GitHub 把以下文件称为 <strong>Community Health Files</strong>。它们放在仓库根目录（或 <code>.github/</code> 目录），GitHub 会自动识别并展示在仓库首页的 sidebar 里：</p>
+
+<table>
+  <tr><th>文件</th><th>作用</th><th>GitHub 展示位置</th></tr>
+  <tr><td><code>README.md</code></td><td>项目介绍 + 快速开始</td><td>仓库首页</td></tr>
+  <tr><td><code>LICENSE</code></td><td>许可证——<strong>没有它别人不能合法使用你的代码</strong></td><td>右侧 sidebar + 代码页顶部</td></tr>
+  <tr><td><code>CONTRIBUTING.md</code></td><td>如何贡献：环境搭建、代码风格、PR 流程</td><td>开 Issue/PR 时自动提示</td></tr>
+  <tr><td><code>CODE_OF_CONDUCT.md</code></td><td>行为准则——让社区保持健康</td><td>右侧 sidebar</td></tr>
+  <tr><td><code>SECURITY.md</code></td><td>如何报告安全漏洞（不放公开 Issue）</td><td>Security 标签页</td></tr>
+  <tr><td><code>SUPPORT.md</code></td><td>去哪寻求帮助（Discussion/Stack Overflow/Chat）</td><td>开 Issue 时提示</td></tr>
+  <tr><td><code>GOVERNANCE.md</code></td><td>项目治理模型（非官方要求但成熟项目标配）</td><td>无自动展示，手动链接</td></tr>
+</table>
+
+<div class="note">
+GitHub 在 Insights → Community 里有一个 <strong>Community Profile</strong> 检查清单，逐项打勾。目标是 100% 全绿——这是开源项目健康度的可视化指标。
+</div>
+
+<h2>2. LICENSE —— 选一个许可证</h2>
+
+<p><strong>没有 LICENSE 的公开仓库 = 保留所有权利。</strong>别人 fork 你的代码在法律上是侵权的。选许可证是开源的第一步。</p>
+
+<table>
+  <tr><th>许可证</th><th>核心条款</th><th>什么时候用</th></tr>
+  <tr><td><strong>MIT</strong></td><td>随便用，保留版权声明即可。最宽松</td><td>「用我的代码，提一嘴就行」——大多数项目的默认选择</td></tr>
+  <tr><td><strong>Apache 2.0</strong></td><td>MIT + 专利授权 + 修改声明</td><td>大公司倾向选这个（有专利保护）。K8s、Terraform 都用它</td></tr>
+  <tr><td><strong>GPL v3</strong></td><td>用了 GPL 代码的项目也必须开源（Copyleft）</td><td>「用我的代码可以，但你也要开源」——Linux 内核用 GPL v2</td></tr>
+  <tr><td><strong>BSD / ISC</strong></td><td>和 MIT 基本等价</td><td>Node.js 生态常见 ISC</td></tr>
+  <tr><td><strong>Unlicense</strong></td><td>放弃所有权利，公共领域</td><td>「随便用，连名字都不用提」</td></tr>
+</table>
+
+<div class="tip">
+<strong>最简单的选择：</strong>在 GitHub 上创建新仓库时，选「Add a license」→ MIT。或者去 <a href="https://choosealicense.com/" target="_blank">choosealicense.com</a>（GitHub 官方出品）用决策树选择。
+</div>
+
+<h2>3. Issue & PR 模板 —— 结构化沟通</h2>
+
+<p>模板让贡献者不用猜你希望他们提供什么信息。</p>
+
+<h3>Issue 模板（多模板选择器）</h3>
+
+<pre><code>.github/
+├── ISSUE_TEMPLATE/
+│   ├── config.yml              # 模板选择器的配置
+│   ├── bug_report.yml          # Bug 报告模板
+│   └── feature_request.yml     # 功能请求模板
+└── PULL_REQUEST_TEMPLATE.md    # PR 模板</code></pre>
+
+<pre><code># .github/ISSUE_TEMPLATE/config.yml
+blank_issues_enabled: true      # 允许不使用模板（开空白 Issue）
+contact_links:
+  - name: 💬 Discussions
+    url: https://github.com/myorg/myrepo/discussions
+    about: 使用问题请去 Discussions，不要开 Issue
+  - name: 🔒 安全漏洞
+    url: https://github.com/myorg/myrepo/security/advisories
+    about: 请通过 Security Advisory 私下报告</code></pre>
+
+<pre><code># .github/PULL_REQUEST_TEMPLATE.md
+## Summary
+<!-- 这个 PR 做了什么？一句话描述 -->
+
+## Related Issues
+<!-- Closes #42 -->
+
+## Type of Change
+- [ ] Bug fix (PATCH)
+- [ ] New feature (MINOR)
+- [ ] Breaking change (MAJOR)
+- [ ] Documentation only
+- [ ] CI/CD or infrastructure
+
+## Checklist
+- [ ] 本地测试通过
+- [ ] 添加/更新了相关测试
+- [ ] 更新了文档（如有需要）</code></pre>
+
+<h2>4. The <code>.github</code> Repository —— 组织级默认配置</h2>
+
+<p>如果你的 GitHub 组织（如 <code>myorg</code>）有一个叫 <code>.github</code> 的仓库，里面的模板文件会作为<strong>所有组织仓库的默认值</strong>。</p>
+
+<pre><code>myorg/.github/
+├── ISSUE_TEMPLATE/              # 所有仓库共享的 Issue 模板
+│   └── bug_report.yml
+├── PULL_REQUEST_TEMPLATE.md     # 所有仓库共享的 PR 模板
+├── CONTRIBUTING.md              # 所有仓库共享的贡献指南
+└── CODE_OF_CONDUCT.md           # 所有仓库共享的行为准则</code></pre>
+
+<p>效果：组织下任何仓库如果没有自己的模板，就自动用 <code>.github</code> 仓库的。这避免了每个仓库都复制粘贴一遍模板。</p>
+
+<div class="tip">
+<strong>DevOps 场景：</strong>你的团队有好几个内部工具仓库。建一个 <code>myorg/.github</code> 仓库，放统一的 Issue/PR 模板 + CODEOWNERS + CONTRIBUTING，一劳永逸。
+</div>
+
+<h2>5. GitHub Discussions & Pages —— 社区基础设施</h2>
+
+<h3>Discussions（社区论坛）</h3>
+
+<p>Settings → General → Features → 勾选 Discussions。它会出现在仓库顶部 tab 栏。</p>
+
+<p>Discussion ≠ Issue。Issue 是「待办任务」，Discussion 是「开放式对话」：</p>
+
+<ul>
+  <li><strong>Q&A</strong>：用户问怎么用 → 答案标记为 Accepted Answer</li>
+  <li><strong>Ideas</strong>：功能建议的早期讨论（成熟后转成 Issue）</li>
+  <li><strong>Announcements</strong>：发布公告（只有 maintainer 能发）</li>
+  <li><strong>General</strong>：其他讨论</li>
+</ul>
+
+<h3>GitHub Pages（文档站点）</h3>
+
+<p>把一个分支（通常 <code>gh-pages</code>）或目录（通常 <code>docs/</code>）发布为静态网站：</p>
+
+<pre><code># Settings → Pages → Source: Deploy from a branch → gh-pages → / (root)
+# 你的网站就在 https://myorg.github.io/myrepo 了
+
+# 或者用 GitHub Actions 自动部署（推荐——支持任意静态站点生成器）
+# Settings → Pages → Source: GitHub Actions → 选一个模板（Jekyll/Static HTML）</code></pre>
+
+<pre><code># .github/workflows/pages.yml
+name: Deploy Docs to GitHub Pages
+
+on:
+  push:
+    branches: [main]
+    paths: ['docs/**']            # 只有 docs/ 变更时才触发
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/configure-pages@v4
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: docs/
+      - uses: actions/deploy-pages@v4
+        id: deployment</code></pre>
+
+<h2>6. 治理模型 —— 谁说了算？</h2>
+
+<p>小型项目一个人定方向（BDFL）。项目长大后需要明确的治理规则：</p>
+
+<table>
+  <tr><th>模型</th><th>描述</th><th>例子</th></tr>
+  <tr><td><strong>BDFL</strong>（Benevolent Dictator for Life）</td><td>一个人最终拍板</td><td>Linux（Linus）、Python（Guido 时期）</td></tr>
+  <tr><td><strong>Maintainer Team</strong></td><td>几个人共同决策，共识制</td><td>大多数中型开源项目</td></tr>
+  <tr><td><strong>TSC</strong>（Technical Steering Committee）</td><td>选举产生的技术委员会投票决定</td><td>Kubernetes、Node.js、CNCF 项目</td></tr>
+</table>
+
+<p>无论哪种模型，都建议在 <code>GOVERNANCE.md</code> 里写清楚：谁有合并权限、如何成为 maintainer、重大决策的流程、冲突如何解决。</p>
+
+<h2>动手练习</h2>
+
+<p><strong>目标：</strong>给你的一个仓库加上全套社区健康文件，把 Community Profile 刷到 100%。</p>
+
+<pre><code># 进入你的仓库
+cd ~/code/podcast   # 或其他你想完善的仓库
+
+# 1. 添加 LICENSE（如果还没有）
+# 去 GitHub Web UI → Add file → Create new file → 输入 LICENSE
+# GitHub 会弹出「Choose a license template」→ 选 MIT → Review and submit
+
+# 2. 创建 CONTRIBUTING.md
+cat > CONTRIBUTING.md << 'EOF'
+# Contributing
+
+## Development Setup
+```bash
+git clone https://github.com/YOU/podcast.git
+cd podcast
+npm install
+npm run dev
+```
+
+## Commit Convention
+We use Conventional Commits: `feat:`, `fix:`, `docs:`, etc.
+
+## Pull Request Process
+1. Create a feature branch from `main`
+2. Make your changes
+3. Run `npm test` to ensure nothing breaks
+4. Open a PR — CI must pass
+5. At least one reviewer must approve
+
+## Code Style
+Run `npm run lint` before committing. CI will fail if linting fails.
+EOF
+
+# 3. 创建 CODE_OF_CONDUCT.md（用 Contributor Covenant 模板）
+curl -o CODE_OF_CONDUCT.md \
+  https://raw.githubusercontent.com/EthicalSource/contributor_covenant/main/release/2-1/CODE_OF_CONDUCT.md
+
+# 4. 创建 SECURITY.md
+cat > SECURITY.md << 'EOF'
+# Security Policy
+
+## Reporting a Vulnerability
+**Please do not report security vulnerabilities through public GitHub issues.**
+
+Instead, use GitHub's [Security Advisory](https://github.com/YOU/podcast/security/advisories/new)
+or email security@example.com.
+
+We will respond within 48 hours.
+EOF
+
+# 5. 创建 .github/ 下的模板
+mkdir -p .github/ISSUE_TEMPLATE
+
+cat > .github/PULL_REQUEST_TEMPLATE.md << 'EOF'
+## Summary
+
+## Type of Change
+- [ ] Bug fix
+- [ ] New feature
+- [ ] Breaking change
+- [ ] Documentation
+EOF
+
+# 6. Push + 去 Insights → Community 看评分
+git add . && git commit -m "docs: add community health files"
+git push
+
+# → 打开你的仓库 → Insights → Community
+# → 应该看到大部分项都打勾了 ✅</code></pre>
+
+<h2>小测验</h2>
+
+<form id="quiz" onsubmit="return checkQuiz(event)">
+  <fieldset style="border:1px solid var(--border); border-radius:6px; padding:1rem; margin:1rem 0;">
+    <legend style="font-weight:600;">Q1：公开仓库没有 LICENSE 文件意味着什么？</legend>
+    <label><input type="radio" name="q1" value="a"> 默认使用 MIT 许可证</label>
+    <label><input type="radio" name="q1" value="b"> 代码属于公共领域，任何人都可随意使用</label>
+    <label><input type="radio" name="q1" value="c"> 保留所有权利，别人没有合法使用权</label>
+    <label><input type="radio" name="q1" value="d"> GitHub 会自动分配一个默认许可证</label>
+  </fieldset>
+
+  <fieldset style="border:1px solid var(--border); border-radius:6px; padding:1rem; margin:1rem 0;">
+    <legend style="font-weight:600;">Q2：<code>myorg/.github</code> 仓库的作用是什么？</legend>
+    <label><input type="radio" name="q2" value="a"> 存放 GitHub Actions 的所有 workflow</label>
+    <label><input type="radio" name="q2" value="b"> 为组织下所有仓库提供默认的 Community Health Files</label>
+    <label><input type="radio" name="q2" value="c"> 存储组织的计费和设置信息</label>
+    <label><input type="radio" name="q2" value="d"> 存放所有组织成员的 SSH 公钥</label>
+  </fieldset>
+
+  <fieldset style="border:1px solid var(--border); border-radius:6px; padding:1rem; margin:1rem 0;">
+    <legend style="font-weight:600;">Q3：Kubernetes、Terraform 这类大型云原生项目通常采用什么许可证？</legend>
+    <label><input type="radio" name="q3" value="mit"><code> MIT</code></label>
+    <label><input type="radio" name="q3" value="apache"><code> Apache 2.0</code></label>
+    <label><input type="radio" name="q3" value="gpl"><code> GPL v3</code></label>
+    <label><input type="radio" name="q3" value="unlicense"><code> Unlicense</code></label>
+  </fieldset>
+
+  <fieldset style="border:1px solid var(--border); border-radius:6px; padding:1rem; margin:1rem 0;">
+    <legend style="font-weight:600;">Q4：GitHub Issue 和 Discussion 的核心区别是什么？</legend>
+    <label><input type="radio" name="q4" value="a"> Issue 可以贴代码，Discussion 不能</label>
+    <label><input type="radio" name="q4" value="b"> Issue 是待办任务，Discussion 是开放式对话</label>
+    <label><input type="radio" name="q4" value="c"> Issue 只有 maintainer 能创建，Discussion 所有人都可以</label>
+    <label><input type="radio" name="q4" value="d"> Issue 在私有仓库里，Discussion 在公开仓库里</label>
+  </fieldset>
+
+  <button type="submit" style="background:var(--accent);color:#fff;border:none;padding:0.6rem 1.5rem;font-size:1rem;border-radius:6px;cursor:pointer;font-family:inherit;">检查答案</button>
+</form>
+
+<div id="quiz-result" style="margin-top:1rem;"></div>
+
+<h2>推荐资源</h2>
+<ul>
+  <li><a href="https://opensource.guide/" target="_blank">Open Source Guides（opensource.guide）</a> — GitHub 官方出品，涵盖创建、维护、社区建设、法律等全部主题。这节课的很多内容来自这里</li>
+  <li><a href="https://choosealicense.com/" target="_blank">choosealicense.com</a> — GitHub 官方的许可证选择器，用决策树帮你选。也有许可证条款的对比</li>
+  <li><a href="https://www.contributor-covenant.org/" target="_blank">Contributor Covenant</a> — 最广泛采用的行为准则模板，复制即用</li>
+  <li><a href="https://github.com/theopensourceway/guidebook" target="_blank">The Open Source Way 2.0（中文版）</a> — Red Hat 社区架构师编写的开源社区治理指南。有中文翻译</li>
+  <li><a href="https://docs.github.com/en/communities" target="_blank">GitHub Docs: Building Communities</a> — 官方社区功能文档</li>
+  <li><a href="https://www.linuxfoundation.org/research/hosting-os-projects-on-github" target="_blank">Linux Foundation: Recommended Practices for Hosting OSS on GitHub</a> — 机构视角的 GitHub 项目最佳实践报告</li>
+</ul>
+
+<h2>下一步</h2>
+
+<p>至此，GitHub 三连课全部完成。你从 Git 操作（0003）→ CI/CD 流水线（0006）→ GitHub 协作（0023）→ 版本发布（0024）→ 开源维护（0025），形成了一条完整的「代码 → 审查 → 合并 → 发布 → 社区」链路。</p>
+
+<p>回到 <a href="../index.html">课程目录</a>，查看你还需要补哪些课。如果你有实际项目需要配 GitHub 工作流，把具体情况发给我——我会给具体建议。</p>
+
+<div class="note">
+Community Profile 里「Code of Conduct」一项需要文件放在仓库根目录才能被自动检测。<code>.github/CODE_OF_CONDUCT.md</code> 也能用，但不会在 profile 里打勾。如果想满分，放根目录。
+</div>
+
+<div class="cite">
+<a href="./0024-semver-releases.html">← Lesson 0024</a> · <a href="../reference/glossary.html">术语表</a> · <a href="../MISSION.md">Mission</a> · <a href="../index.html">课程目录 →</a>
+</div>
+
+<script>
+function checkQuiz(e) {
+  e.preventDefault();
+  const answers = { q1: 'c', q2: 'b', q3: 'apache', q4: 'b' };
+  let correct = 0, feedback = [];
+  for (const [q, a] of Object.entries(answers)) {
+    const sel = document.querySelector(`input[name="${q}"]:checked`);
+    if (!sel) feedback.push(q + ': 未作答');
+    else if (sel.value === a) { correct++; feedback.push(q + ': ✓ 正确'); }
+    else feedback.push(q + ': ✗ 错误');
+  }
+  const pct = Math.round(correct/4*100);
+  const div = document.getElementById('quiz-result');
+  div.innerHTML = `<div style="background:${pct===100?'var(--success-bg)':'var(--warn-bg)'};color:${pct===100?'var(--success-fg)':'var(--warn-fg)'};padding:0.75rem 1rem;border-radius:6px;">
+    <strong>得分：${correct}/4 (${pct}%)</strong><br>${feedback.join('<br>')}
+    ${pct===100?'<br>🎉 全对！开源项目维护核心概念已掌握。':''}
+  </div>`;
+}
+</script>
+
+</body>
+</html>

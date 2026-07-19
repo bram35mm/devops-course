@@ -1,0 +1,262 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Lesson 0023 — GitHub 协作：Issues、Pull Request、Code Review</title>
+<link rel="stylesheet" href="../assets/style.css">
+</head>
+<body>
+
+<h1>Lesson 0023：GitHub 协作——从「一个人 push」到「一群人协作」</h1>
+
+<p>前两节你已经掌握了 Git 进阶操作（0003）和 GitHub Actions CI/CD（0006）。这节课填上中间缺失的一环：<strong>GitHub 作为协作平台</strong>——如何管理任务、发起和审查代码变更、用规则保护代码质量。</p>
+
+<p>这些是 DevOps 日常的高频操作：配置分支保护让 CI 通过才能合并、Review 别人的 Terraform/Ansible 代码、管理团队的技术债务清单。</p>
+
+<h2>1. GitHub Issues —— 不只是 Bug 追踪器</h2>
+
+<p>Issue 是 GitHub 项目管理的核心单元。它远不止「报告 bug」——成熟的团队用它来做 <strong>任务管理、技术讨论、功能设计、会议记录</strong>。</p>
+
+<h3>Issue 的核心属性</h3>
+
+<table>
+  <tr><th>属性</th><th>用途</th><th>DevOps 场景</th></tr>
+  <tr><td><strong>Labels（标签）</strong></td><td>分类和优先级</td><td><code>bug</code> / <code>enhancement</code> / <code>infra</code> / <code>security</code> / <code>priority-high</code></td></tr>
+  <tr><td><strong>Milestones（里程碑）</strong></td><td>按版本/迭代分组</td><td>「v1.2.0」「Q3 Sprint 3」「安全加固」</td></tr>
+  <tr><td><strong>Assignees（负责人）</strong></td><td>谁在干这个活</td><td>分配 Terraform 模块开发任务</td></tr>
+  <tr><td><strong>Projects（项目看板）</strong></td><td>Kanban 视图</td><td>Todo → In Progress → Review → Done</td></tr>
+</table>
+
+<h3>Issue 模板</h3>
+
+<p>在 <code>.github/ISSUE_TEMPLATE/</code> 下放 YAML 文件，创建 Issue 时自动显示模板选择器：</p>
+
+<pre><code># .github/ISSUE_TEMPLATE/bug_report.yml
+name: Bug Report
+description: 报告一个 bug
+labels: [bug, triage]
+body:
+  - type: textarea
+    attributes:
+      label: 发生了什么？
+      description: 清晰描述你遇到的问题
+    validations:
+      required: true
+  - type: textarea
+    attributes:
+      label: 复现步骤
+      description: 1. 执行... 2. 点击... 3. 看到...
+  - type: input
+    attributes:
+      label: 版本号
+      placeholder: v1.2.3</code></pre>
+
+<h3>Issue 与 PR 的关联</h3>
+
+<p>在 PR 描述里写 <code>Closes #42</code> 或 <code>Fixes #42</code>——PR 合并后，Issue #42 自动关闭。这是 GitHub 最核心的「代码变更 → 任务完成」自动化。</p>
+
+<div class="tip">
+<strong>DevOps 实践：</strong>把 Infrastructure-as-Code 的变更也走 Issue → PR → Review 流程。改 Terraform、改 Ansible、改 CI 配置——都先开 Issue 记录「为什么改」，再开 PR 记录「改了什么」。
+</div>
+
+<h2>2. Pull Request —— 代码变更的最小协作单元</h2>
+
+<p>PR 不只是「请求合并代码」。它是一个<strong>讨论线程 + 代码 diff + CI 检查结果 + 审批状态</strong>的综合视图。</p>
+
+<h3>PR 生命周期</h3>
+
+<pre><code>创建分支 → 写代码 → git push → 开 PR（Draft）
+                                    │
+    Mark as ready ←── 继续改 ──←── CI 失败？
+         │
+    请求 Review ──→ Reviewer 提意见 ──→ 修改 → 再 push（PR 自动更新）
+         │
+    全部通过 → Approve → Merge（Squash / Rebase / Merge commit）</code></pre>
+
+<h3>Draft PR（草稿 PR）</h3>
+
+<p>开 PR 时点「Create draft pull request」——别人能看到代码但不能 merge，适合「先给大家看看方向对不对」的早期反馈。</p>
+
+<h3>Suggested Changes（建议修改）</h3>
+
+<p>Review 代码时，点行号旁边的 <code>+/-</code> 按钮，写建议代码——PR 作者可以一键接受。这是 GitHub 最高效的 Review 交互：</p>
+
+<pre><code>```suggestion
+# 你的建议代码
+echo "Deploying to $ENVIRONMENT"  # Reviewer 建议加上环境变量提示
+```</code></pre>
+
+<h3>三种 Merge 策略</h3>
+
+<table>
+  <tr><th>策略</th><th>结果</th><th>什么时候用</th></tr>
+  <tr><td><strong>Merge commit</strong></td><td>创建一个 merge commit，保留完整分支历史</td><td>多人协作的长分支</td></tr>
+  <tr><td><strong>Squash and merge</strong></td><td>所有 commit 压缩成一个，干净整洁</td><td>单个 feature 的多个 WIP commit（推荐）</td></tr>
+  <tr><td><strong>Rebase and merge</strong></td><td>逐个 rebase 到 main，线性历史无 merge commit</td><td>追求完全线性历史（需配合 branch protection）</td></tr>
+</table>
+
+<div class="tip">
+大多数 DevOps 团队用 <strong>Squash and merge</strong>——main 分支上一个 PR 对应一个 commit，历史清晰，回滚方便。
+</div>
+
+<h2>3. Branch Protection —— 给 main 分支上锁</h2>
+
+<p>这是 DevOps 工程师的<strong>核心职责之一</strong>：配置规则让代码质量不靠自觉、靠机械执行。</p>
+
+<p>在仓库 Settings → Branches → Add rule，输入 <code>main</code>（或 <code>release/*</code> 等 pattern）：</p>
+
+<table>
+  <tr><th>规则</th><th>效果</th><th>DevOps 意义</th></tr>
+  <tr><td><strong>Require a pull request before merging</strong></td><td>不能直接 push 到 main，必须走 PR</td><td>强制 code review</td></tr>
+  <tr><td><strong>Require approvals</strong></td><td>至少 N 个人点 Approve 才能 merge</td><td>防止单人绕过审查</td></tr>
+  <tr><td><strong>Require status checks to pass</strong></td><td>CI（lint/test/build）不过不允许 merge</td><td><strong>这就是 CI/CD 门禁！</strong></td></tr>
+  <tr><td><strong>Require conversation resolution</strong></td><td>所有 Review 讨论必须 resolve</td><td>确保每条意见都有回应</td></tr>
+  <tr><td><strong>Require linear history</strong></td><td>禁止 merge commit，只允许 rebase/squash</td><td>保持 main 分支历史是一条直线</td></tr>
+  <tr><td><strong>Do not allow bypassing</strong></td><td>即使 admin 也不能跳过规则</td><td>防止「我就改一行，直接 push 吧」</td></tr>
+</table>
+
+<div class="note">
+Branch protection 规则中的 <strong>"Require status checks to pass"</strong> 就是 CI/CD 流水线和 Git 工作流的连接点。你在 0006 写的 GitHub Actions workflow，加上这个规则，就形成了真正的「CI 不通过就合不进去」的门禁。
+</div>
+
+<h2>4. CODEOWNERS —— 自动指派 Reviewer</h2>
+
+<p>在 <code>.github/CODEOWNERS</code> 文件里定义「谁拥有哪些代码的审查权」：</p>
+
+<pre><code># 所有 .tf 文件的变更自动请 infra 团队 review
+*.tf                    @myorg/infra-team
+
+# CI/CD 配置的变更自动请 DevOps 负责人 review
+.github/workflows/      @bram35mm
+.github/workflows/deploy.yml  @bram35mm
+
+# 文档谁都可以改，不需要 owner
+docs/</code></pre>
+
+<p>效果：有人改 <code>.tf</code> 文件开 PR → @myorg/infra-team 自动被设为 reviewer。结合 branch protection 的「require review from code owners」，连审批都自动化了。</p>
+
+<h2>动手练习</h2>
+
+<p><strong>目标：</strong>在你的一个 GitHub 仓库上配置完整的协作流程。</p>
+
+<pre><code># 1. 创建 Issue 模板
+mkdir -p .github/ISSUE_TEMPLATE
+
+cat > .github/ISSUE_TEMPLATE/bug_report.yml << 'EOF'
+name: Bug Report
+description: 报告一个问题
+labels: [bug]
+body:
+  - type: textarea
+    attributes:
+      label: 描述
+    validations:
+      required: true
+  - type: input
+    attributes:
+      label: 环境
+      placeholder: "Ubuntu 22.04, Docker 29.x"
+EOF
+
+# 2. 设置 Branch Protection（在 GitHub Web UI 上操作）
+# Settings → Branches → Add rule → 输入 "main"
+# 勾选：
+#   ☑ Require a pull request before merging
+#   ☑ Require approvals (设为 1)
+#   ☑ Require status checks to pass (搜你的 CI job 名)
+# → Create
+
+# 3. 模拟一次协作流程
+git checkout -b fix/update-readme
+echo "Updated at $(date)" >> README.md
+git add README.md
+git commit -m "docs: update README"
+git push origin fix/update-readme
+
+# → 去 GitHub 开 PR
+# → 观察：你能直接 push 到 main 吗？（不能——branch protection）
+# → 合并 PR（如果 CI 配了 status check，观察它是否必须通过）</code></pre>
+
+<h2>小测验</h2>
+
+<form id="quiz" onsubmit="return checkQuiz(event)">
+  <fieldset style="border:1px solid var(--border); border-radius:6px; padding:1rem; margin:1rem 0;">
+    <legend style="font-weight:600;">Q1：在 PR 描述中写什么能让合并后自动关闭关联的 Issue？</legend>
+    <label><input type="radio" name="q1" value="a"><code> See #42</code></label>
+    <label><input type="radio" name="q1" value="b"><code> Closes #42</code></label>
+    <label><input type="radio" name="q1" value="c"><code> /close 42</code></label>
+    <label><input type="radio" name="q1" value="d"><code> !resolve #42</code></label>
+  </fieldset>
+
+  <fieldset style="border:1px solid var(--border); border-radius:6px; padding:1rem; margin:1rem 0;">
+    <legend style="font-weight:600;">Q2：哪个 Branch Protection 规则连接了 CI/CD 流水线和 Git 工作流？</legend>
+    <label><input type="radio" name="q2" value="a"> Require a pull request before merging</label>
+    <label><input type="radio" name="q2" value="b"> Require approvals</label>
+    <label><input type="radio" name="q2" value="c"> Require status checks to pass</label>
+    <label><input type="radio" name="q2" value="d"> Require linear history</label>
+  </fieldset>
+
+  <fieldset style="border:1px solid var(--border); border-radius:6px; padding:1rem; margin:1rem 0;">
+    <legend style="font-weight:600;">Q3：CODEOWNERS 文件的作用是什么？</legend>
+    <label><input type="radio" name="q3" value="a"> 定义仓库的所有者（转移仓库所有权）</label>
+    <label><input type="radio" name="q3" value="b"> 自动为特定文件的 PR 指派 Reviewer</label>
+    <label><input type="radio" name="q3" value="c"> 限制谁能删除仓库</label>
+    <label><input type="radio" name="q3" value="d"> 定义 CI/CD 的运行权限</label>
+  </fieldset>
+
+  <fieldset style="border:1px solid var(--border); border-radius:6px; padding:1rem; margin:1rem 0;">
+    <legend style="font-weight:600;">Q4：想把一个 PR 的 5 个 WIP commit 合并成 1 个干净的 commit 再合入 main，用哪种 merge 策略？</legend>
+    <label><input type="radio" name="q4" value="merge"> Merge commit（创建一个 merge commit）</label>
+    <label><input type="radio" name="q4" value="squash"> Squash and merge（压缩成一个 commit）</label>
+    <label><input type="radio" name="q4" value="rebase"> Rebase and merge（逐 commit rebase）</label>
+    <label><input type="radio" name="q4" value="all"> 以上都可以</label>
+  </fieldset>
+
+  <button type="submit" style="background:var(--accent);color:#fff;border:none;padding:0.6rem 1.5rem;font-size:1rem;border-radius:6px;cursor:pointer;font-family:inherit;">检查答案</button>
+</form>
+
+<div id="quiz-result" style="margin-top:1rem;"></div>
+
+<h2>推荐资源</h2>
+<ul>
+  <li><a href="https://docs.github.com/en/repositories/configuring-branches-and-merges-in-your-repository/managing-protected-branches/about-protected-branches" target="_blank">GitHub Docs: About protected branches</a> — Branch protection 的完整参考</li>
+  <li><a href="https://docs.github.com/en/communities/using-templates-to-encourage-useful-issues-and-pull-requests" target="_blank">GitHub Docs: Issue & PR templates</a> — 模板语法（YAML form schema）的官方文档</li>
+  <li><a href="https://docs.github.com/en/repositories/managing-your-repositorys-settings-and-features/customizing-your-repository/about-code-owners" target="_blank">GitHub Docs: About code owners</a> — CODEOWNERS 语法和最佳实践</li>
+  <li><a href="https://opensource.guide/" target="_blank">Open Source Guides（opensource.guide）</a> — GitHub 官方出品，开源项目从创建到维护的全套指南。Lesson 0025 会深入讲</li>
+</ul>
+
+<h2>下一步</h2>
+
+<p>协作流程跑通了，但代码怎么变成「一个版本」？下一课——<strong>版本发布管理：SemVer、Tags、Releases、Changelog</strong>（0024），你将学会用语义化版本号标记每一次发布，让 CI/CD 流水线自动构建和发布。</p>
+
+<div class="note">
+Branch protection 中「require status checks」搜不到你的 CI job？你需要至少跑过一次那个 workflow（先 push 一次让它触发），GitHub 才会在列表中显示它。之后就能选了。
+</div>
+
+<div class="cite">
+<a href="./0022-database-ops.html">← Lesson 0022</a> · <a href="../reference/glossary.html">术语表</a> · <a href="../MISSION.md">Mission</a> · <a href="./0024-semver-releases.html">Lesson 0024 →</a>
+</div>
+
+<script>
+function checkQuiz(e) {
+  e.preventDefault();
+  const answers = { q1: 'b', q2: 'c', q3: 'b', q4: 'squash' };
+  let correct = 0, feedback = [];
+  for (const [q, a] of Object.entries(answers)) {
+    const sel = document.querySelector(`input[name="${q}"]:checked`);
+    if (!sel) feedback.push(q + ': 未作答');
+    else if (sel.value === a) { correct++; feedback.push(q + ': ✓ 正确'); }
+    else feedback.push(q + ': ✗ 错误');
+  }
+  const pct = Math.round(correct/4*100);
+  const div = document.getElementById('quiz-result');
+  div.innerHTML = `<div style="background:${pct===100?'var(--success-bg)':'var(--warn-bg)'};color:${pct===100?'var(--success-fg)':'var(--warn-fg)'};padding:0.75rem 1rem;border-radius:6px;">
+    <strong>得分：${correct}/4 (${pct}%)</strong><br>${feedback.join('<br>')}
+    ${pct===100?'<br>🎉 全对！GitHub 协作核心概念已掌握。':''}
+  </div>`;
+}
+</script>
+
+</body>
+</html>

@@ -1,0 +1,342 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Lesson 0024 — 版本发布：SemVer、Tags、Releases、Changelog</title>
+<link rel="stylesheet" href="../assets/style.css">
+</head>
+<body>
+
+<h1>Lesson 0024：版本发布——让每一次交付都有名有姓</h1>
+
+<p>上一课你学会了用 Issues 和 PR 协作，用 Branch Protection 守门。但 CI 通过、代码合并之后——<strong>怎么告诉世界「这个版本可以用了」？</strong></p>
+
+<p>这节课教你 DevOps 工程师的发布基本功：语义化版本（SemVer）、Git Tag、GitHub Releases、Changelog、以及自动化发布的 Conventional Commits 体系。</p>
+
+<h2>1. Semantic Versioning（语义化版本）——为什么版本号不能随便写</h2>
+
+<p><strong>SemVer 2.0.0</strong>（<a href="https://semver.org/" target="_blank">semver.org</a>）定义了一套版本号的精确规则：</p>
+
+<pre><code>MAJOR.MINOR.PATCH
+  │     │     └─ 修 bug，行为不变（Bug fix）
+  │     └─────── 加功能，向后兼容（Feature）
+  └───────────── 不兼容的 API 变更（Breaking change）
+
+v2.4.1  →  Major=2, Minor=4, Patch=1</code></pre>
+
+<h3>什么时候升哪个号？</h3>
+
+<table>
+  <tr><th>变更类型</th><th>版本变化</th><th>例子</th></tr>
+  <tr><td>修了一个 bug，API 没变</td><td><code>1.3.0 → 1.3.1</code>（PATCH）</td><td>修复日志格式错误</td></tr>
+  <tr><td>加了一个新功能，老 API 还能用</td><td><code>1.3.1 → 1.4.0</code>（MINOR）</td><td>新增 <code>/api/v1/export</code></td></tr>
+  <tr><td>改了接口，老调用方会挂</td><td><code>1.4.0 → 2.0.0</code>（MAJOR）</td><td>删掉了 <code>/api/v1/old-endpoint</code></td></tr>
+</table>
+
+<h3>预发布版本</h3>
+
+<p>在 PATCH 后面加 <code>-</code> 和标识符：</p>
+
+<pre><code>1.0.0-alpha.1    # 内部测试
+1.0.0-beta.2     # 外部早期测试
+1.0.0-rc.1       # Release Candidate，不出意外就是最终版了</code></pre>
+
+<div class="note">
+<strong>SemVer 的铁律：</strong>一旦发布了 <code>v1.0.0</code>，你不能修改它指向的代码。发现 bug？发 <code>v1.0.1</code>。版本号是不可变的标签——这就是为什么 git tag 之后不应该 force push。
+</div>
+
+<h2>2. Git Tag —— 给 commit 起名</h2>
+
+<p>Tag 是一个指向特定 commit 的<strong>不可变</strong>引用（不像 branch 会移动）。两种 tag：</p>
+
+<table>
+  <tr><th>类型</th><th>命令</th><th>内容</th><th>用哪个？</th></tr>
+  <tr><td><strong>Lightweight</strong></td><td><code>git tag v1.0.0</code></td><td>只有一个 ref 指针</td><td>❌ 临时用</td></tr>
+  <tr><td><strong>Annotated</strong></td><td><code>git tag -a v1.0.0 -m "..."</code></td><td>含 tagger、日期、message、GPG 签名</td><td>✅ <strong>永远用这个</strong></td></tr>
+</table>
+
+<pre><code># 创建一个 annotated tag
+git tag -a v1.0.0 -m "Release v1.0.0: initial stable release"
+
+# 查看 tag 详情（annotated 才有这些信息）
+git show v1.0.0
+# Tagger: bram35mm &lt;...&gt;
+# Date:   Sat Jul 19 2026
+#
+# Release v1.0.0: initial stable release
+
+# 推送 tag 到 GitHub
+git push origin v1.0.0        # 推送单个 tag
+git push origin --tags         # 推送所有本地 tag（小心别把旧 tag 也推上去了）
+
+# 删除远程 tag（如果搞错了）
+git push origin --delete v1.0.0
+git tag -d v1.0.0              # 同时删除本地的</code></pre>
+
+<div class="tip">
+<strong>DevOps 场景：</strong>CI/CD 流水线用 tag push 作为部署触发器。在 GitHub Actions 里：<code>on: push: tags: ['v*']</code>——推一个 <code>v1.0.0</code> tag，自动触发构建+测试+发布+部署。
+</div>
+
+<h2>3. GitHub Releases —— Tag 的可分享版本</h2>
+
+<p>GitHub Release 是<strong>基于 tag 的发布单元</strong>。它 = tag + release notes + 可下载的二进制/assets + 讨论区。</p>
+
+<h3>在 GitHub Web UI 上创建</h3>
+
+<ol>
+  <li>右侧 Releases → Create a new release</li>
+  <li>选一个已有的 tag（或现场创建）</li>
+  <li>写 Release title（如 <code>v1.0.0 — Initial Stable Release</code>）</li>
+  <li>写 Release notes。点「Generate release notes」让 GitHub 自动生成（基于合并的 PR）</li>
+  <li>如果是测试版，勾选「Set as a pre-release」</li>
+  <li>可以上传编译好的二进制、tar.gz、deb 包等作为 assets</li>
+</ol>
+
+<h3>用 GitHub Actions 自动创建 Release</h3>
+
+<pre><code># .github/workflows/release.yml
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Create Release
+        uses: softprops/action-gh-release@v2
+        with:
+          generate_release_notes: true    # 自动生成 release notes
+          prerelease: ${{ contains(github.ref, 'rc') || contains(github.ref, 'beta') }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}</code></pre>
+
+<div class="note">
+<strong>semantic-release</strong> 是这个模式的工业级实现：你只需用 Conventional Commits 格式写 commit message，push 到 main 后它自动：分析 commit → 决定版本号 → 生成 changelog → 创建 git tag → 创建 GitHub Release → 发布到 npm/Docker Hub/任何地方。Lesson 0025 的练习会用到。
+</div>
+
+<h2>4. CHANGELOG.md —— 给人看的版本日志</h2>
+
+<p>SemVer 的数字告诉用户「改了多少」，Changelog 告诉用户<strong>「改了什么」</strong>。</p>
+
+<p><a href="https://keepachangelog.com/" target="_blank">keepachangelog.com</a> 定义了标准格式：</p>
+
+<pre><code># Changelog
+
+All notable changes to this project will be documented in this file.
+
+## [1.1.0] - 2026-07-15
+
+### Added
+- `POST /api/v1/export` endpoint for data export
+- Docker healthcheck in Dockerfile
+
+### Changed
+- Upgraded Node.js base image from 22.1 to 22.7
+
+### Deprecated
+- `GET /api/v1/legacy` — use `GET /api/v2/data` instead
+
+### Fixed
+- Race condition in WebSocket reconnect logic (#142)
+
+### Security
+- Patched ReDoS vulnerability in path-to-regexp (#156)
+
+## [1.0.0] - 2026-06-01
+
+### Added
+- Initial release with core API</code></pre>
+
+<p>7 个标准分类（只用你需要的）：</p>
+
+<table>
+  <tr><td><code>Added</code></td><td>新功能</td></tr>
+  <tr><td><code>Changed</code></td><td>已有功能的变更</td></tr>
+  <tr><td><code>Deprecated</code></td><td>即将移除的功能</td></tr>
+  <tr><td><code>Removed</code></td><td>已移除的功能</td></tr>
+  <tr><td><code>Fixed</code></td><td>Bug 修复</td></tr>
+  <tr><td><code>Security</code></td><td>安全漏洞修复</td></tr>
+  <tr><td><code>Docs</code></td><td>仅文档变更（非标准，但很多项目用）</td></tr>
+</table>
+
+<h2>5. Conventional Commits —— 让机器读懂你的 commit</h2>
+
+<p><a href="https://www.conventionalcommits.org/" target="_blank">Conventional Commits</a> 是标准化的 commit message 格式。它 = SemVer + 自动化发布之间的桥梁。</p>
+
+<pre><code>&lt;type&gt;[optional scope]: &lt;description&gt;
+
+[optional body]
+
+[optional footer(s)]</code></pre>
+
+<pre><code>feat: add user login system               # → MINOR bump
+fix: resolve navbar bug on mobile          # → PATCH bump
+feat!: redesign API structure              # → MAJOR bump（注意 ! 号）
+
+# 或者用 footer 声明
+feat: redesign API structure
+
+BREAKING CHANGE: removed /api/v1/old-endpoint, use /api/v2 instead</code></pre>
+
+<table>
+  <tr><th>type</th><th>含义</th><th>版本影响</th></tr>
+  <tr><td><code>feat:</code></td><td>新功能</td><td>MINOR</td></tr>
+  <tr><td><code>fix:</code></td><td>修 bug</td><td>PATCH</td></tr>
+  <tr><td><code>feat!</code> / 含 <code>BREAKING CHANGE:</code></td><td>破坏性变更</td><td>MAJOR</td></tr>
+  <tr><td><code>docs:</code></td><td>仅文档</td><td>不触发版本</td></tr>
+  <tr><td><code>chore:</code></td><td>构建/工具变更</td><td>不触发版本</td></tr>
+  <tr><td><code>ci:</code></td><td>CI/CD 配置</td><td>不触发版本</td></tr>
+  <tr><td><code>refactor:</code></td><td>重构</td><td>不触发版本</td></tr>
+  <tr><td><code>test:</code></td><td>测试</td><td>不触发版本</td></tr>
+</table>
+
+<p><strong>为什么 DevOps 要关心这个？</strong>因为当你的团队用 Conventional Commits + semantic-release，每次 push 到 main：</p>
+
+<pre><code>git push → CI 跑 → semantic-release 分析 commit → 
+自动决定版本号 → 生成 CHANGELOG → git tag → GitHub Release → 部署
+
+零手动操作。这就是 「push on main, ship it」。</code></pre>
+
+<h2>动手练习</h2>
+
+<p><strong>目标：</strong>在一个测试仓库里走完完整的发布流程。</p>
+
+<pre><code># 1. 准备一个测试仓库
+cd /tmp
+mkdir release-demo && cd release-demo && git init
+echo "# Release Demo" > README.md
+git add . && git commit -m "docs: initial commit"
+
+# 2. 模拟几个 feature 和 fix
+echo "export PORT=3000" > .env.example
+git add . && git commit -m "feat: add port configuration"
+
+echo 'console.log("server starting")' > index.js
+git add . && git commit -m "feat: add entry point"
+
+# 修复一个 bug
+echo 'console.log("server starting on port", process.env.PORT)' > index.js
+git add . && git commit -m "fix: log port number on startup"
+
+# 3. 用 git log 回顾一下
+git log --oneline
+# a1b2c3d fix: log port number on startup
+# e4f5g6h feat: add entry point
+# i7j8k9l feat: add port configuration
+# m0n1o2p docs: initial commit
+
+# 4. 创建 annotated tag
+git tag -a v1.0.0 -m "Release v1.0.0: first stable release"
+
+# 5. 查看 tag
+git show v1.0.0
+
+# 6. 写 CHANGELOG（手动写一次，体会格式）
+cat > CHANGELOG.md << 'EOF'
+# Changelog
+
+## [1.0.0] - 2026-07-19
+
+### Added
+- Port configuration via `.env.example`
+- Application entry point with port logging
+
+EOF
+
+git add CHANGELOG.md && git commit -m "docs: add CHANGELOG for v1.0.0"
+
+# 7. 如果这是真实项目，接下来：
+# git push origin main
+# git push origin v1.0.0
+# → GitHub 上会自动触发 Release workflow（如果你配了上面的 Actions）
+# → 去 Releases 页面手动创建或等 CI 自动创建</code></pre>
+
+<h2>小测验</h2>
+
+<form id="quiz" onsubmit="return checkQuiz(event)">
+  <fieldset style="border:1px solid var(--border); border-radius:6px; padding:1rem; margin:1rem 0;">
+    <legend style="font-weight:600;">Q1：v1.2.3 → 加了一个向后兼容的新 API endpoint，版本号应变成？</legend>
+    <label><input type="radio" name="q1" value="a"><code> v1.2.4</code></label>
+    <label><input type="radio" name="q1" value="b"><code> v1.3.0</code></label>
+    <label><input type="radio" name="q1" value="c"><code> v2.0.0</code></label>
+    <label><input type="radio" name="q1" value="d"><code> v1.2.3-beta.1</code></label>
+  </fieldset>
+
+  <fieldset style="border:1px solid var(--border); border-radius:6px; padding:1rem; margin:1rem 0;">
+    <legend style="font-weight:600;">Q2：为什么要用 annotated tag 而不是 lightweight tag？</legend>
+    <label><input type="radio" name="q2" value="a"> Lightweight tag 不能被 push 到 GitHub</label>
+    <label><input type="radio" name="q2" value="b"> Annotated tag 包含 tagger、日期、message，可 GPG 签名</label>
+    <label><input type="radio" name="q2" value="c"> Annotated tag 更轻量，适合 CI/CD 使用</label>
+    <label><input type="radio" name="q2" value="d"> Lightweight tag 会在 90 天后自动过期</label>
+  </fieldset>
+
+  <fieldset style="border:1px solid var(--border); border-radius:6px; padding:1rem; margin:1rem 0;">
+    <legend style="font-weight:600;">Q3：commit <code>feat!: remove old auth system</code> 应该触发哪个版本号变化？</legend>
+    <label><input type="radio" name="q3" value="patch"> PATCH</label>
+    <label><input type="radio" name="q3" value="minor"> MINOR</label>
+    <label><input type="radio" name="q3" value="major"> MAJOR</label>
+    <label><input type="radio" name="q3" value="none"> 不触发版本变化</label>
+  </fieldset>
+
+  <fieldset style="border:1px solid var(--border); border-radius:6px; padding:1rem; margin:1rem 0;">
+    <legend style="font-weight:600;">Q4：在 keepachangelog 格式中，新增功能放在哪个分类下？</legend>
+    <label><input type="radio" name="q4" value="added"><code> Added</code></label>
+    <label><input type="radio" name="q4" value="changed"><code> Changed</code></label>
+    <label><input type="radio" name="q4" value="fixed"><code> Fixed</code></label>
+    <label><input type="radio" name="q4" value="new"><code> New</code></label>
+  </fieldset>
+
+  <button type="submit" style="background:var(--accent);color:#fff;border:none;padding:0.6rem 1.5rem;font-size:1rem;border-radius:6px;cursor:pointer;font-family:inherit;">检查答案</button>
+</form>
+
+<div id="quiz-result" style="margin-top:1rem;"></div>
+
+<h2>推荐资源</h2>
+<ul>
+  <li><a href="https://semver.org/" target="_blank">semver.org</a> — Semantic Versioning 2.0.0 官方规范。10 分钟读完，终身受用</li>
+  <li><a href="https://keepachangelog.com/" target="_blank">keepachangelog.com</a> — Changelog 最佳实践指南，含反例和常见错误</li>
+  <li><a href="https://www.conventionalcommits.org/" target="_blank">conventionalcommits.org</a> — Conventional Commits 1.0.0 规范。Angular 团队的实践演变成行业标准</li>
+  <li><a href="https://github.com/semantic-release/semantic-release" target="_blank">semantic-release</a> — 自动发布工具。配一次，以后 push 到 main 就自动发版</li>
+  <li><a href="https://github.com/vweevers/common-changelog" target="_blank">common-changelog</a> — 比 keepachangelog 更细的 Changelog 风格指南</li>
+</ul>
+
+<h2>下一步</h2>
+
+<p>版本发布体系建好了。但一个开源项目不止有代码——最后一课 <strong>开源项目维护</strong>（0025），你将学习社区治理、许可证选择、GitHub Pages 文档站，以及用 <code>.github</code> 仓库统一管理组织级配置。</p>
+
+<div class="note">
+如果你在自己的项目里试了 tag → push → 没触发 CI？检查 Actions workflow 的 trigger：<code>on: push: tags: ['v*']</code> 还是 <code>on: [push]</code>。只有前者在 tag push 时触发。
+</div>
+
+<div class="cite">
+<a href="./0023-github-collaboration.html">← Lesson 0023</a> · <a href="../reference/glossary.html">术语表</a> · <a href="../MISSION.md">Mission</a> · <a href="./0025-open-source-maintenance.html">Lesson 0025 →</a>
+</div>
+
+<script>
+function checkQuiz(e) {
+  e.preventDefault();
+  const answers = { q1: 'b', q2: 'b', q3: 'major', q4: 'added' };
+  let correct = 0, feedback = [];
+  for (const [q, a] of Object.entries(answers)) {
+    const sel = document.querySelector(`input[name="${q}"]:checked`);
+    if (!sel) feedback.push(q + ': 未作答');
+    else if (sel.value === a) { correct++; feedback.push(q + ': ✓ 正确'); }
+    else feedback.push(q + ': ✗ 错误');
+  }
+  const pct = Math.round(correct/4*100);
+  const div = document.getElementById('quiz-result');
+  div.innerHTML = `<div style="background:${pct===100?'var(--success-bg)':'var(--warn-bg)'};color:${pct===100?'var(--success-fg)':'var(--warn-fg)'};padding:0.75rem 1rem;border-radius:6px;">
+    <strong>得分：${correct}/4 (${pct}%)</strong><br>${feedback.join('<br>')}
+    ${pct===100?'<br>🎉 全对！版本发布管理核心概念已掌握。':''}
+  </div>`;
+}
+</script>
+
+</body>
+</html>

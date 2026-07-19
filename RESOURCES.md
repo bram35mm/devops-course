@@ -57,6 +57,29 @@
 - [Cloud Native Computing Foundation (CNCF)](https://www.cncf.io/)
   云原生技术的大本营。Kubernetes、Prometheus、Helm 等项目都在这里。有免费的 [CNCF Landscape](https://landscape.cncf.io/) 全景图。
 
+
+## GitHub 协作 & 项目管理
+
+- [opensource.guide](https://opensource.guide/)
+  GitHub 官方出品的开源指南，覆盖「如何创建开源项目」「如何维护」「如何建立社区」等全部主题。**用于：系统性学习开源项目维护的方方面面。**
+
+- [semver.org](https://semver.org/)
+  语义化版本规范（Semantic Versioning 2.0.0）。定义了 MAJOR.MINOR.PATCH 的精确含义和版本优先级规则。**用于：理解何时升 MAJOR、何时升 MINOR。**
+
+- [keepachangelog.com](https://keepachangelog.com/)
+  Changelog 最佳实践指南。定义了 CHANGELOG.md 的标准格式（Added/Changed/Deprecated/Removed/Fixed/Security）。**用于：写人能看懂的 Changelog。**
+
+- [conventionalcommits.org](https://www.conventionalcommits.org/)
+  约定式提交规范（Conventional Commits 1.0.0）。定义了 `feat:` `fix:` `BREAKING CHANGE:` 等标准化 commit message 格式。**用于：让机器能从 commit 历史自动判断版本号。**
+
+- [common-changelog (vweevers)](https://github.com/vweevers/common-changelog)
+  Changelog 风格指南，比 keepachangelog 更细致，覆盖多仓库、预发布版本等边缘情况。**用于：写生产级 Changelog 的参考。**
+
+- [The Open Source Way 2.0](https://github.com/theopensourceway/guidebook)
+  Red Hat 社区架构师编写的开源社区管理指南，有中文版。覆盖用户→贡献者转化、治理模型、导师制。**用于：深度理解开源社区治理。**
+
+- [Linux Foundation: Recommended Practices for Hosting OSS on GitHub](https://www.linuxfoundation.org/research/hosting-os-projects-on-github)
+  Linux 基金会官方报告，系统总结在 GitHub 上托管开源项目的最佳实践。**用于：从机构角度理解 GitHub 项目管理的完整图景。**
 ## Gaps（待填补的空白）
 
 - 目前缺少中文社区/资源推荐。如用户偏好中文内容，后续补充。
