@@ -351,6 +351,87 @@
 
   <dt>Application（ArgoCD）</dt>
   <dd>ArgoCD 管理的单元。一个 YAML 文件声明了：Git 仓库 URL + K8s 资源路径 + 目标集群 + 同步策略。等价于「把 Git 的哪个目录，同步到哪个集群的哪个 namespace」。</dd>
+
+<h2>云平台 (Cloud Platform)</h2>
+
+<dl>
+  <dt>VPC (Virtual Private Cloud)</dt>
+  <dd>虚拟私有云。云上所有资源的网络容器，可自定 IP 范围、划分子网、配路由表和网关。Public Subnet 有出网路由（Internet Gateway），Private Subnet 无公网 IP 更安全（数据库放这里）。</dd>
+
+  <dt>Security Group（安全组）</dt>
+  <dd>作用在云实例（EC2/ECS）级别的有状态防火墙。有状态 = 允许 inbound 的请求，响应自动允许 outbound（不需要配 outbound 规则）。与 NACL（子网级无状态）互补。</dd>
+
+  <dt>IAM (Identity and Access Management)</dt>
+  <dd>云的权限管理体系。三个核心概念：User（人）、Role（角色，给服务用的临时凭证）、Policy（JSON 权限文档，Allow/Deny 特定 Action 在特定 Resource）。最小权限原则：只给刚好够用的权限。</dd>
+
+  <dt>IAM Role vs IAM User</dt>
+  <dd>User 有永久 Access Key，适合人用；Role 提供临时凭证（自动轮转），适合 EC2/Lambda 等服务用。最佳实践：永远不给 EC2 配 Access Key，用 Role。</dd>
+
+  <dt>S3 (Simple Storage Service)</dt>
+  <dd>AWS 的对象存储。Key-Value 模型，无限容量，11 个 9 持久性。典型用途：静态网站托管、CI/CD 制品存储、日志归档、Terraform State 后端。</dd>
+
+  <dt>RDS (Relational Database Service)</dt>
+  <dd>云的托管数据库服务。自动处理备份、升级、高可用（Multi-AZ 自动故障切换 < 2 分钟）、磁盘扩容。比自己装数据库省掉 90% 的运维工作。</dd>
+
+  <dt>Multi-AZ</dt>
+  <dd>RDS 高可用模式：主库 + 同步备库在不同可用区。主库故障自动切到备库，数据零丢失。生产数据库必开。</dd>
+
+  <dt>Elastic IP</dt>
+  <dd>AWS 的静态公网 IP 地址。可以随时绑定到不同的 EC2 实例——但不要给每台机器绑，贵且浪费。应该用 Load Balancer 对外暴露服务。</dd>
+</dl>
+
+<h2>DevSecOps / 安全</h2>
+
+<dl>
+  <dt>DevSecOps</dt>
+  <dd>Development + Security + Operations 的融合。核心理念：安全不是上线前的「检查点」，而是内嵌在 CI/CD 每一步的自动化流程。Shift Left = 安全检测尽量左移（代码阶段），早期发现成本最低。</dd>
+
+  <dt>SAST (Static Application Security Testing)</dt>
+  <dd>静态应用安全测试。不运行代码，直接读源码找安全漏洞（SQL 注入、XSS、硬编码密钥）。代表工具：Semgrep、SonarQube。</dd>
+
+  <dt>Secret Scanning（密钥扫描）</dt>
+  <dd>扫描 Git 历史和当前代码，检测误提交的 API Key / Token / 密码。代表工具：gitleaks、truffleHog。最佳实践：pre-commit hook 在提交前拦截 + CI 中二次检测。</dd>
+
+  <dt>Container Image Scanning</dt>
+  <dd>扫描 Docker 镜像的基础系统包和应用依赖，检测已知漏洞（CVE）。代表工具：Trivy、Snyk。按严重级别（CRITICAL/HIGH/MEDIUM/LOW）分级，有 CRITICAL 应阻止发布。</dd>
+
+  <dt>CVE (Common Vulnerabilities and Exposures)</dt>
+  <dd>公开已知的安全漏洞编号系统。如 CVE-2024-21626 是 runc 容器逃逸漏洞。Trivy 等扫描器用 CVE 数据库来比对镜像里的软件包版本。</dd>
+
+  <dt>OPA / Gatekeeper</dt>
+  <dd>Open Policy Agent。K8s 的策略引擎，用 Rego 语言写策略规则。Gatekeeper 是其 K8s 原生的实现——把策略做成 Custom Resource。禁止 latest tag、强制 resource limits、禁止 hostPath 等策略都通过它落地。</dd>
+
+  <dt>Distroless Image</dt>
+  <dd>Google 推出的超精简容器基础镜像。不含 shell、包管理器、甚至不含 ls——只有你的应用和它最少的运行时依赖。攻击者在容器里拿到 shell 也没用，因为没有 shell。</dd>
+</dl>
+
+<h2>数据库运维</h2>
+
+<dl>
+  <dt>Database Migration（数据库迁移）</dt>
+  <dd>对数据库 schema 的版本化变更。每个迁移包含 up（正向）和 down（回滚）两个文件，和代码一起版本控制，CI/CD 自动执行。代表工具：golang-migrate、Flyway、Alembic。</dd>
+
+  <dt>RPO (Recovery Point Objective)</dt>
+  <dd>恢复点目标。能容忍丢失多少数据（时间维度）。RPO = 1 小时 → 万一现在炸了，最多丢最近 1 小时的数据。由备份频率决定。</dd>
+
+  <dt>RTO (Recovery Time Objective)</dt>
+  <dd>恢复时间目标。从故障发生到服务恢复的最长允许时间。RTO = 30 分钟 → 从炸到好必须在 30 分钟内完成。</dd>
+
+  <dt>PITR (Point-in-Time Recovery)</dt>
+  <dd>时间点恢复。利用 PostgreSQL WAL 归档，可以将数据库恢复到过去任意时间点（「回到昨天下午 3:05 的状态」）。比 pg_dump 定时备份更精细。</dd>
+
+  <dt>WAL (Write-Ahead Log)</dt>
+  <dd>写前日志。PostgreSQL 在修改实际数据页之前，先把操作记录写入 WAL 日志。WAL = 数据库的「录像」，用于崩溃恢复和 PITR。</dd>
+
+  <dt>PgBouncer</dt>
+  <dd>PostgreSQL 轻量级连接池（~2MB 内存）。应用连接 PgBouncer :6432 → PgBouncer 用少量实际连接转发到 PostgreSQL :5432。Transaction Pooling 模式：每个事务用完立刻还连接，是生产推荐配置。</dd>
+
+  <dt>缓存穿透 / 击穿 / 雪崩</dt>
+  <dd>Redis 面试三连击。穿透：查不存在的数据，绕过缓存直接命中 DB——用布隆过滤器。击穿：一个热点 key 过期，大量请求打向 DB——用互斥锁/mutex。雪崩：大量 key 同时过期或 Redis 宕机——TTL 加随机值 + 高可用集群。</dd>
+
+  <dt>maxmemory-policy</dt>
+  <dd>Redis 内存满后的淘汰策略。allkeys-lru（淘汰最近最少用的）适合缓存场景；noeviction（不淘汰，拒绝写入）是默认值但生产中几乎不用。</dd>
+</dl>
 </dl>
 
 <div class="cite">

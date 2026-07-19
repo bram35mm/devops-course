@@ -58,6 +58,9 @@
   .pill-ansible { background: #fce7f3; color: #9d174d; }
   .pill-logs { background: #e0f2fe; color: #075985; }
   .pill-gitops { background: #f0fdf4; color: #166534; }
+.pill-cloud { background: #fce4ec; color: #880e4f; }
+.pill-security { background: #fff3e0; color: #e65100; }
+.pill-database { background: #e8eaf6; color: #283593; }
   .flow-chart {
     background: var(--code-bg);
     border-radius: 8px;
@@ -77,7 +80,7 @@
 
 <h1>DevOps 从零到进阶 &nbsp;—&nbsp; 完整课程目录</h1>
 
-<p>19 节课，4 个阶段，覆盖 DevOps 面试和日常工作的全部基础 + 深入技能。</p>
+<p>22 节课，5 个阶段，覆盖 DevOps 面试和日常工作的全部基础 + 深入技能。</p>
 
 <div class="legend">
   <span><span class="pill pill-core">核心</span> 基础体系</span>
@@ -87,6 +90,9 @@
   <span><span class="pill pill-ansible">Ansible</span> 配置管理</span>
   <span><span class="pill pill-logs">日志</span> 可观测性</span>
   <span><span class="pill pill-gitops">GitOps</span> 声明式部署</span>
+  <span><span class="pill pill-cloud">云平台</span> 基础设施</span>
+  <span><span class="pill pill-security">安全</span> DevSecOps</span>
+  <span><span class="pill pill-database">数据库</span> 运维</span>
 </div>
 
 <!-- ====== 课程依赖关系图 ====== -->
@@ -129,7 +135,14 @@
   │
 <span class="accent">0018</span> 日志系统 ←─────────── 监控(0009)
   │
-<span class="accent">0019</span> GitOps：ArgoCD ←─── Git(0003) + CI/CD(0006) + K8s(0014-0016)</div>
+<span class="accent">0019</span> GitOps：ArgoCD ←─── Git(0003) + CI/CD(0006) + K8s(0014-0016)
+  │
+<span class="dim">阶段二 · Stage 5：云平台与安全运维</span>
+<span class="accent">0020</span> 云平台实操 ←─────── 部署(0007) + IaC(0008)
+  │
+<span class="accent">0021</span> DevSecOps ←───────── CI/CD(0006) + Docker(0005) + K8s(0014-0016)
+  │
+<span class="accent">0022</span> 数据库运维 ←─────── Linux(0002) + CI/CD(0006)</div>
 
 
 <!-- ====== 阶段一 ====== -->
@@ -310,7 +323,38 @@
   <span class="num pill pill-gitops">0019</span>
   <span class="title">GitOps：ArgoCD</span>
   <div class="desc">Git 作为集群唯一真相来源。ArgoCD Application、Sync、Drift Detection、Self-healing。完整 CI → GitOps → K8s 自动化链路。</div>
-  <div class="prereq">前置：0003（Git）+ 0006（CI/CD）+ 0014–0016（K8s）→ 后续：结业项目</div>
+  <div class="prereq">前置：0003（Git）+ 0006（CI/CD）+ 0014–0016（K8s）→ 后续：0020</div>
+</a>
+
+</ul>
+</div>
+
+<!-- ====== 阶段二：Stage 5 ====== -->
+<div class="phase">
+<h2>阶段二 · Stage 5：云平台与安全运维（3 节）<span style="font-size:0.7rem;color:var(--accent);margin-left:0.5em;">NEW</span></h2>
+<p class="subtitle">补齐云平台实操 + DevSecOps 安全防线 + 数据库运维。覆盖 JD 高频需求，从初级迈向中级的关键三节课。</p>
+
+<ul class="lesson-list">
+
+<a class="lesson-card" href="lessons/0020-cloud-platform.html">
+  <span class="num pill pill-cloud">0020</span>
+  <span class="title">云平台实操：AWS 核心服务</span>
+  <div class="desc">VPC 网络模型、EC2 实例管理、IAM 权限（Role/Policy）、S3 对象存储、RDS 托管数据库。用 Terraform 管云资源。</div>
+  <div class="prereq">前置：0007（部署）+ 0008（IaC）→ 后续：0021</div>
+</a>
+
+<a class="lesson-card" href="lessons/0021-devsecops.html">
+  <span class="num pill pill-security">0021</span>
+  <span class="title">DevSecOps：安全嵌入流水线</span>
+  <div class="desc">四道防线：SAST 代码扫描（Semgrep）、密钥检测（gitleaks）、镜像扫描（Trivy）、K8s 策略管控（OPA）。Shift Left。</div>
+  <div class="prereq">前置：0006（CI/CD）+ 0005（Docker）+ 0014–0016（K8s）→ 后续：0022</div>
+</a>
+
+<a class="lesson-card" href="lessons/0022-database-ops.html">
+  <span class="num pill pill-database">0022</span>
+  <span class="title">数据库运维基础</span>
+  <div class="desc">迁移管理（Flyway/golang-migrate）、备份恢复（pg_dump/PITR/RPO-RTO）、连接池排错（PgBouncer）、Redis 缓存三连。</div>
+  <div class="prereq">前置：0002（Linux）+ 0006（CI/CD）→ 后续：结业项目</div>
 </a>
 
 </ul>
@@ -325,7 +369,7 @@
 </ul>
 
 <div class="cite">
-  共 19 节课 · 4 个参考文档 · <a href="MISSION.md">Mission</a>
+  共 22 节课 · 4 个参考文档 · <a href="MISSION.md">Mission</a>
 </div>
 
 </body>

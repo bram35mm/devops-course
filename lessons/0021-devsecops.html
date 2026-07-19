@@ -1,0 +1,316 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Lesson 0021 — DevSecOps：把安全嵌入流水线</title>
+<link rel="stylesheet" href="../assets/style.css">
+</head>
+<body>
+
+<h1>Lesson 0021：DevSecOps——安全不是上线前检查，是每一步都在检查</h1>
+
+<p>DevOps 不做安全 = 你搭了一条高速公路，但没有护栏。这节课帮你把安全自动化嵌入已有的 CI/CD 流水线（0006）和 K8s 部署（0014-0016）。</p>
+
+<pre><code>传统安全：开发完了 → 安全团队审查 → 修 → 再审查 → 上线（周级别）
+DevSecOps：每次 git push → 自动扫描 → 有问题直接挡在流水线里（秒级别）
+                    ↑
+                   Shift Left —— 安全问题越早发现，修复成本越低</code></pre>
+
+<h2>DevSecOps 四道防线</h2>
+
+<table>
+  <tr><th>防线</th><th>在哪一步</th><th>工具</th><th>防什么</th></tr>
+  <tr><td>1. 代码扫描（SAST）</td><td>CI：commit → PR</td><td>Semgrep, SonarQube</td><td>SQL 注入、XSS、硬编码密钥</td></tr>
+  <tr><td>2. 密钥检测</td><td>CI：commit → PR + pre-commit</td><td>gitleaks, truffleHog</td><td>误提交 API Key / Token / 密码</td></tr>
+  <tr><td>3. 镜像扫描</td><td>CI：build → push</td><td>Trivy, Snyk</td><td>基础镜像 CVE、依赖漏洞</td></tr>
+  <tr><td>4. 运行时安全</td><td>K8s：deploy → run</td><td>OPA/Gatekeeper, Falco</td><td>不合规 Pod、异常行为</td></tr>
+</table>
+
+<h2>第一道防线：代码扫描（SAST）</h2>
+
+<p>SAST（Static Application Security Testing）= 不运行代码，直接读源码找安全漏洞。</p>
+
+<pre><code># 安装 Semgrep（开源 SAST 工具，DevOps 标配）
+pip install semgrep
+
+# 在你的项目里跑（以之前 0005 的 Node.js 项目为例）
+cd /tmp/docker-demo
+semgrep --config=auto .
+# 输出示例：
+#   server.js
+#     javascript.lang.security.audit.path-traversal.path-join-resolve-traversal
+#       Found 'path.join' with user-controlled input — possible path traversal
+
+# 加到 GitHub Actions（结合 0006）
+cat >> .github/workflows/ci.yml &lt;&lt; 'EOF'
+  security-sast:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Semgrep scan
+        run: |
+          pip install semgrep
+          semgrep --config=auto --error .
+          # --error = 发现漏洞就把 CI 标红（不让合并）
+EOF</code></pre>
+
+<p>Semgrep 的 <code>--config=auto</code> 自动检测项目语言并加载对应规则集。它不像传统 SAST 需要配置几百条规则——零配置就能跑。</p>
+
+<h2>第二道防线：密钥检测——救命的那道防线</h2>
+
+<p>所有 DevOps 工程师最害怕的凌晨 3 点电话：「你把 AWS Secret Key 提交到公开仓库了」。</p>
+
+<pre><code># gitleaks：扫描 Git 历史，找泄露的密钥
+# 安装
+curl -sSfL https://github.com/gitleaks/gitleaks/releases/download/v8.18.0/gitleaks_8.18.0_linux_x64.tar.gz | sudo tar -xz -C /usr/local/bin gitleaks
+
+# 在你的仓库里检测
+cd ~/code/devops
+gitleaks detect --source . --verbose
+# 如果有漏洞：输出文件名 + 行号 + 匹配到的密钥类型
+
+# pre-commit hook：在提交前拦截（最靠左的防御）
+cat > .git/hooks/pre-commit &lt;&lt; 'EOF'
+#!/bin/bash
+# 每次 git commit 之前自动跑 gitleaks
+gitleaks protect --staged --verbose
+if [ $? -ne 0 ]; then
+  echo "密钥泄露！commit 已被阻止。"
+  exit 1
+fi
+EOF
+chmod +x .git/hooks/pre-commit</code></pre>
+
+<div class="tip">
+<strong>如果已经泄露了怎么办？</strong>第一步：立刻在云平台 revoke 那个 Key（AWS IAM / GitHub Settings）。第二步：清理 Git 历史（<code>git filter-branch</code> 或 BFG Repo-Cleaner）。第三步：<code>git push --force</code>。不要只删文件 + 新 commit——Git 历史里还有。
+</div>
+
+<h2>第三道防线：容器镜像扫描</h2>
+
+<p>你 0005 写的 Dockerfile <code>FROM node:22-alpine</code>——这个基础镜像有多少已知漏洞？Trivy 告诉你。</p>
+
+<pre><code># 安装 Trivy
+curl -sfL https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/install.sh | sudo sh
+
+# 扫描本地镜像
+docker build -t my-app:latest .
+trivy image my-app:latest
+# 输出：按严重级别（CRITICAL/HIGH/MEDIUM/LOW）列出 CVE
+
+# 只关注 CRITICAL 和 HIGH（严重和高级别漏洞）
+trivy image --severity CRITICAL,HIGH my-app:latest
+
+# 加到 GitHub Actions——镜像有严重漏洞就不让 push
+cat >> .github/workflows/ci.yml &lt;&lt; 'EOF'
+  security-image:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build image
+        run: docker build -t my-app:${{ github.sha }} .
+      - name: Scan image with Trivy
+        uses: aquasecurity/trivy-action@master
+        with:
+          image-ref: my-app:${{ github.sha }}
+          format: table
+          exit-code: 1              # 有 CRITICAL 就失败
+          severity: CRITICAL,HIGH
+EOF</code></pre>
+
+<p>写更安全的 Dockerfile（生产规范）：</p>
+
+<pre><code># 不安全
+FROM node:22-alpine
+USER root
+COPY . .
+CMD ["node", "server.js"]
+
+# 安全
+FROM node:22-alpine
+RUN addgroup -S appgroup && adduser -S appuser -G appgroup
+WORKDIR /app
+COPY --chown=appuser:appgroup package*.json ./
+RUN npm ci --production               # 不加 devDependencies
+COPY --chown=appuser:appgroup . .
+USER appuser                            # 不用 root 运行！
+EXPOSE 3000
+CMD ["node", "server.js"]
+
+# docker run 时再加一层防护
+docker run --read-only --tmpfs /tmp \
+  --cap-drop=ALL --cap-add=NET_BIND_SERVICE \
+  my-app:latest
+# --read-only: 文件系统只读
+# --cap-drop=ALL: 去掉所有 Linux capabilities
+# --cap-add=NET_BIND_SERVICE: 只加回绑定端口的权限</code></pre>
+
+<table>
+  <tr><th>实践</th><th>为什么</th></tr>
+  <tr><td><code>USER</code> 非 root</td><td>容器逃逸漏洞利用 root 权限提权到宿主机</td></tr>
+  <tr><td><code>--read-only</code></td><td>阻止攻击者写文件（webshell、挖矿程序）</td></tr>
+  <tr><td><code>npm ci --production</code></td><td>devDependencies 可能包含有漏洞的工具包</td></tr>
+  <tr><td>固定 base image digest</td><td><code>node:22-alpine@sha256:abc...</code> 而不是 <code>node:22-alpine</code>，防止上游投毒</td></tr>
+</table>
+
+<h2>第四道防线：K8s 策略管控（OPA/Gatekeeper）</h2>
+
+<p>你 0016 学过 K8s RBAC——控制<strong>谁能</strong>做什么。但 RBAC 控制不了<strong>做什么是合规的</strong>。</p>
+
+<p>比如：谁都能 <code>kubectl apply -f evil-pod.yaml</code>，只要他有权限。你怎么拦住？</p>
+
+<pre><code># 用 OPA Gatekeeper 写一条策略：禁止使用 latest tag
+# 这是面试常考题——写出一个 Rego 策略
+
+apiVersion: templates.gatekeeper.sh/v1
+kind: ConstraintTemplate
+metadata:
+  name: k8sdisallowedtags
+spec:
+  crd:
+    spec:
+      names:
+        kind: K8sDisallowedTags
+  targets:
+    - target: admission.k8s.gatekeeper.sh
+      rego: |
+        package k8sdisallowedtags
+        violation[{"msg": msg}] {
+          container := input.review.object.spec.containers[_]
+          endswith(container.image, ":latest")
+          msg := sprintf("禁止使用 latest tag: %v", [container.image])
+        }
+        violation[{"msg": msg}] {
+          container := input.review.object.spec.containers[_]
+          not contains(container.image, ":")
+          msg := sprintf("镜像必须指定 tag（不能隐式用 latest）: %v", [container.image])
+        }</code></pre>
+
+<p>生产环境至少要有这几条策略：</p>
+<ul>
+  <li>禁止 <code>:latest</code> tag — 必须指定版本号</li>
+  <li>禁止 <code>hostPath</code> volume — 防止容器访问宿主机文件系统</li>
+  <li>强制设 <code>resources.requests/limits</code> — 防止一个 Pod 吃光节点资源</li>
+  <li>禁止 <code>privileged: true</code> — 特权容器几乎等于 root on host</li>
+</ul>
+
+<h2>动手练习：给你的 CI/CD 加上三道安全防线</h2>
+
+<p><strong>任务：</strong>在你 0005 的 Node.js 项目或任何已有项目里，依次完成以下三步。</p>
+
+<pre><code># 1. SAST 扫描
+cd your-project
+semgrep --config=auto .
+# 看输出，修掉至少一个 HIGH/WARNING
+
+# 2. 密钥检测
+gitleaks detect --source .
+# 如果检出密钥（即使只是 demo key），观察输出的格式
+
+# 3. 镜像扫描
+docker build -t your-app:test .
+trivy image --severity CRITICAL,HIGH your-app:test
+# 看有多少 CRITICAL——这就是为什么基础镜像要选 Alpine + 定期更新
+
+# 4. 把三道防线串进 GitHub Actions（选做）
+# 在 .github/workflows/ci.yml 里加三个 job：
+#   security-sast (semgrep)
+#   security-secrets (gitleaks)
+#   security-image (trivy)
+# 每个 job 有漏洞就把 CI 标红</code></pre>
+
+<div class="tip">
+<strong>你的任务：</strong>跑通上面三道扫描后，试着在代码里故意写一个硬编码的「假」AWS Key（比如 <code>AKIAIOSFODNN7EXAMPLE</code>），看 gitleaks 能不能抓出来。然后删掉它。<br>
+<strong>加分题：</strong>写一个 pre-commit hook，在每次 git commit 前自动跑 Semgrep + gitleaks，有漏洞就拒绝提交。
+</div>
+
+<h2>面试速记：DevSecOps 核心回答模板</h2>
+
+<ol>
+  <li><strong>「你怎么保证 CI/CD 流水线的安全？」</strong>→ 四道防线：SAST 扫代码 + gitleaks 扫密钥 + Trivy 扫镜像 + OPA 管 K8s。每一道都在 pipeline 里自动化，发现问题就 block。</li>
+  <li><strong>「密钥泄露了怎么办？」</strong>→ 第一秒 revoke 密钥（IAM/GitHub Settings）→ 清理 Git 历史 → force push → 排查是否已被恶意使用</li>
+  <li><strong>「Docker 镜像怎么做安全加固？」</strong>→ 非 root 用户 + read-only 文件系统 + distroless 基础镜像 + Trivy 扫描 CVE + 固定 digest</li>
+</ol>
+
+<h2>小测验</h2>
+
+<form id="quiz" onsubmit="return checkQuiz(event)">
+  <fieldset style="border:1px solid var(--border); border-radius:6px; padding:1rem; margin:1rem 0;">
+    <legend style="font-weight:600;">Q1：DevSecOps「Shift Left」的核心含义是什么？</legend>
+    <label><input type="radio" name="q1" value="a"> 把安全团队移到办公室左侧</label>
+    <label><input type="radio" name="q1" value="b"> 在流水线早期（代码阶段）就做安全检查，而不是等上线前</label>
+    <label><input type="radio" name="q1" value="c"> 把 CI/CD 流水线步骤往左对齐</label>
+    <label><input type="radio" name="q1" value="d"> 代码 review 时只看左边那栏（删除的代码）</label>
+  </fieldset>
+
+  <fieldset style="border:1px solid var(--border); border-radius:6px; padding:1rem; margin:1rem 0;">
+    <legend style="font-weight:600;">Q2：不小心提交了 AWS Secret Key 到公开仓库，第一步做什么？</legend>
+    <label><input type="radio" name="q2" value="a"> 立刻删除那个 GitHub 仓库</label>
+    <label><input type="radio" name="q2" value="b"> 先 revoke 密钥（AWS IAM 里禁用），再清理 Git 历史</label>
+    <label><input type="radio" name="q2" value="c"> git reset + force push 覆盖历史</label>
+    <label><input type="radio" name="q2" value="d"> 改一个 commit message 假装没发生</label>
+  </fieldset>
+
+  <fieldset style="border:1px solid var(--border); border-radius:6px; padding:1rem; margin:1rem 0;">
+    <legend style="font-weight:600;">Q3：Docker 安全加固中，为什么必须用非 root 用户运行容器？</legend>
+    <label><input type="radio" name="q3" value="a"> root 用户权限太高，容器逃逸后能控制宿主机</label>
+    <label><input type="radio" name="q3" value="b"> Docker Hub 禁止 root 用户镜像</label>
+    <label><input type="radio" name="q3" value="c"> root 用户运行的应用速度更慢</label>
+    <label><input type="radio" name="q3" value="d"> Kubernetes 只能运行非 root 容器</label>
+  </fieldset>
+
+  <fieldset style="border:1px solid var(--border); border-radius:6px; padding:1rem; margin:1rem 0;">
+    <legend style="font-weight:600;">Q4：Trivy 在 CI/CD 流水线里的作用是什么？</legend>
+    <label><input type="radio" name="q4" value="a"> 扫描 Dockerfile 语法错误</label>
+    <label><input type="radio" name="q4" value="b"> 扫描容器镜像里已知的安全漏洞（CVE），有严重漏洞就阻止构建</label>
+    <label><input type="radio" name="q4" value="c"> 扫描代码里的 SQL 注入漏洞</label>
+    <label><input type="radio" name="q4" value="d"> 监控 K8s 集群的运行时异常</label>
+  </fieldset>
+
+  <button type="submit" style="background:var(--accent);color:#fff;border:none;padding:0.6rem 1.5rem;font-size:1rem;border-radius:6px;cursor:pointer;font-family:inherit;">检查答案</button>
+</form>
+
+<div id="quiz-result" style="margin-top:1rem;"></div>
+
+<h2>推荐资源</h2>
+<ul>
+  <li><a href="https://semgrep.dev/docs/" target="_blank">Semgrep 官方文档</a> — 零配置 SAST，支持 30+ 语言</li>
+  <li><a href="https://github.com/gitleaks/gitleaks" target="_blank">gitleaks (GitHub)</a> — 密钥检测的事实标准，CI/CD 集成文档齐全</li>
+  <li><a href="https://github.com/aquasecurity/trivy" target="_blank">Trivy (GitHub)</a> — 容器镜像/文件系统/Git 仓库的全能扫描器</li>
+  <li><a href="https://owasp.org/www-project-top-ten/" target="_blank">OWASP Top 10</a> — Web 安全十大风险，DevSecOps 必读</li>
+  <li><a href="https://slsa.dev/" target="_blank">SLSA Framework</a> — 供应链安全框架，面试加分知识</li>
+</ul>
+
+<h2>下一步</h2>
+<p>下一课学 <a href="./0022-database-ops.html">Lesson 0022：数据库运维基础</a>——备份策略、连接池排错、迁移管理。DevOps 最常见的半夜 on-call 原因。</p>
+
+<div class="note">
+安全不是「加上就完了」。今天加的 Semgrep/Trivy/gitleaks 规则一个月后可能过时——CVE 每天都在新增，密钥模式也在变化。养成每月更新扫描规则的习惯。
+</div>
+
+<div class="cite">
+<a href="./0020-cloud-platform.html">← Lesson 0020</a> · <a href="../reference/glossary.html">术语表</a> · <a href="../MISSION.md">Mission</a>
+</div>
+
+<script>
+function checkQuiz(e) {
+  e.preventDefault();
+  const answers = { q1: 'b', q2: 'b', q3: 'a', q4: 'b' };
+  let correct = 0, feedback = [];
+  for (const [q, a] of Object.entries(answers)) {
+    const sel = document.querySelector(`input[name="${q}"]:checked`);
+    if (!sel) feedback.push(q + ': 未作答');
+    else if (sel.value === a) { correct++; feedback.push(q + ': \u2713 正确'); }
+    else feedback.push(q + ': \u2717 错误');
+  }
+  const pct = Math.round(correct/4*100);
+  const div = document.getElementById('quiz-result');
+  div.innerHTML = `<div style="background:${pct===100?'var(--success-bg)':'var(--warn-bg)'};color:${pct===100?'var(--success-fg)':'var(--warn-fg)'};padding:0.75rem 1rem;border-radius:6px;">
+    <strong>得分：${correct}/4 (${pct}%)</strong><br>${feedback.join('<br>')}
+    ${pct===100?'<br>\uD83C\uDF89 全对！DevSecOps 四道防线已掌握。':''}
+  </div>`;
+}
+</script>
+
+</body>
+</html>

@@ -1,6 +1,6 @@
 # DevOps 从零到进阶
 
-16 节中文 DevOps 课程，覆盖从 Linux 命令行到 Kubernetes 生产实践的全部基础 + 进阶技能。面向有开发经验、无运维经验的全栈/前端开发者。
+22 节中文 DevOps 课程，覆盖从 Linux 命令行到 Kubernetes 生产实践、云平台、DevSecOps、数据库运维。面向有开发经验、无运维经验的全栈/前端开发者。
 
 **线上地址**: [devops-course-6ep.pages.dev](https://devops-course-6ep.pages.dev)
 
@@ -18,7 +18,7 @@
   0008  IaC：Terraform
   0009  监控 & 可观测性
 
-阶段二（7 节）— 深入进阶，按需跳学
+阶段二 · Stage 1-4（10 节）— 深入进阶，按需跳学
   0010  Linux 系统管理进阶
   0011  Linux 排错实战
   0012  网络协议基础
@@ -26,7 +26,14 @@
   0014  K8s 核心概念
   0015  K8s 网络与配置
   0016  K8s 生产实践
-```
+  0017  Ansible 配置管理
+  0018  日志系统：Loki + Promtail
+  0019  GitOps：ArgoCD
+
+阶段二 · Stage 5（3 节）— 云平台与运维实战
+  0020  云平台实操（AWS 核心服务）
+  0021  DevSecOps 安全基础
+  0022  数据库运维基础
 
 每节课包含：概念讲解 → 动手练习 → 小测验 → 推荐资源。
 
@@ -46,17 +53,19 @@ python3 -m http.server 8000
 # 打开 http://localhost:8000
 ```
 
-或直接浏览器打开 `index.html`。
 
 ## 学习目标
 
-学完 16 节课后具备：
+学完 22 节课后具备：
 
 - 从零搭建 CI/CD 流水线（build → test → deploy）
 - 用 Docker 容器化任意项目，Docker Compose 编排多服务
 - 用 Terraform 声明式管理基础设施
 - Linux 服务器排错（网络、进程、磁盘、权限）
 - K8s 核心概念与生产实践（Helm、HPA、RBAC）
+- 操作云平台核心服务（VPC/EC2/IAM/S3/RDS）
+- DevSecOps 安全防线（SAST、密钥检测、镜像扫描、K8s 策略）
+- 数据库备份恢复、连接池排错、Redis 缓存运维
 - 通过 DevOps 初级/中级岗位的技术面试
 
 ## 笔记

@@ -1,0 +1,363 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Lesson 0022 — 数据库运维：你的数据比你的代码更值钱</title>
+<link rel="stylesheet" href="../assets/style.css">
+</head>
+<body>
+
+<h1>Lesson 0022：数据库运维基础——半夜电话响，多半是数据库</h1>
+
+<p>DevOps 最常见的生产事故 Top 3：磁盘满了、内存爆了、<strong>数据库挂了</strong>。代码可以回滚，数据丢了就是真丢了。这节课覆盖 DevOps 日常要处理的数据库运维技能——不是 DBA 的深度，但足够让你在中小团队独立负责数据库。</p>
+
+<h2>DevOps 需要懂数据库什么</h2>
+
+<table>
+  <tr><th>技能</th><th>为什么需要</th><th>对应工具</th></tr>
+  <tr><td>迁移管理</td><td>代码上线经常伴随着数据库 schema 变更</td><td>Flyway, golang-migrate, Alembic</td></tr>
+  <tr><td>备份与恢复</td><td>删库跑路不是段子——RPO/RTO 是面试固定题</td><td>pg_dump, WAL 归档, PITR</td></tr>
+  <tr><td>连接池排错</td><td>「网站 502」80% 是数据库连接池打满了</td><td>PgBouncer, HikariCP, pg_stat_activity</td></tr>
+  <tr><td>慢查询分析</td><td>「页面加载要 10 秒」——看数据库在等什么</td><td>EXPLAIN ANALYZE, pg_stat_statements</td></tr>
+  <tr><td>Redis 运维</td><td>缓存雪崩/穿透/击穿——面试经典三连</td><td>Redis CLI, INFO, MONITOR</td></tr>
+</table>
+
+<h2>第一课：数据库迁移——为什么不能在 CI/CD 里手动跑 SQL</h2>
+
+<p>回忆你 0007 的部署流程：<code>ssh server 'docker compose up -d'</code>。但如果新代码需要加一个数据库字段呢？</p>
+
+<pre><code># 错误的做法（人类手动）：
+ssh db-server
+psql -d myapp
+ALTER TABLE users ADD COLUMN avatar_url TEXT;
+# 然后更新代码...
+# 问题：
+# 1. 谁跑的？什么时候跑的？为什么？
+# 2. 回滚怎么办？
+# 3. 代码和数据库谁先上线？顺序错了就炸</code></pre>
+
+<p>正确的做法——<strong>迁移文件放在代码仓库里，CI/CD 自动执行</strong>：</p>
+
+<pre><code># 用 golang-migrate 举例（Node.js 用 sequelize-cli/postgrator，Python 用 Alembic，原理一样）
+
+# 1. 安装
+curl -L https://github.com/golang-migrate/migrate/releases/download/v4.17.0/migrate.linux-amd64.tar.gz | tar xvz
+sudo mv migrate /usr/local/bin/
+
+# 2. 创建迁移文件
+migrate create -ext sql -dir migrations -seq add-avatar-url
+# 生成两个文件：
+#   migrations/000001_add-avatar-url.up.sql
+#   migrations/000001_add-avatar-url.down.sql
+
+# 3. 写 up（正向迁移——加字段）
+cat > migrations/000001_add-avatar-url.up.sql &lt;&lt; 'EOF'
+ALTER TABLE users ADD COLUMN IF NOT EXISTS avatar_url TEXT;
+EOF
+
+# 4. 写 down（回滚——删字段）。这是关键：每次 up 必须有对应的 down！
+cat > migrations/000001_add-avatar-url.down.sql &lt;&lt; 'EOF'
+ALTER TABLE users DROP COLUMN IF EXISTS avatar_url;
+EOF
+
+# 5. 本地执行迁移
+export DATABASE_URL="postgres://user:pass@localhost:5432/myapp?sslmode=disable"
+migrate -database "$DATABASE_URL" -path migrations up
+# 输出：1/u add-avatar-url (123ms)
+
+# 6. 回滚到上一个版本
+migrate -database "$DATABASE_URL" -path migrations down 1</code></pre>
+
+<p>把迁移嵌入 GitHub Actions（结合 0006）：</p>
+
+<pre><code># .github/workflows/deploy.yml 里加一个 step
+- name: Run database migration
+  run: |
+    migrate -database "${{ secrets.DATABASE_URL }}" -path migrations up
+  # 如果迁移失败，CI 标红，Slack 告警——你不会半夜被叫起来修</code></pre>
+
+<div class="tip">
+<strong>黄金规则：迁移必须是幂等的。</strong>用 <code>ADD COLUMN IF NOT EXISTS</code> 而不是 <code>ADD COLUMN</code>。看——这和 Ansible(0017) 的幂等性是一个道理：跑一次和跑十次结果一样，不会因为字段已存在而报错。
+</div>
+
+<h2>第二课：备份与恢复——你丢了数据才知道它的价值</h2>
+
+<p>面试固定题：<strong>「RPO 和 RTO 是什么？你们的数据库 RPO/RTO 是多少？」</strong></p>
+
+<table>
+  <tr><th>指标</th><th>全称</th><th>含义</th><th>例子</th></tr>
+  <tr><td>RPO</td><td>Recovery Point Objective</td><td>能容忍丢失多少数据（时间维度）</td><td>RPO = 1 小时 → 最多丢最近 1 小时的数据</td></tr>
+  <tr><td>RTO</td><td>Recovery Time Objective</td><td>故障后多久能恢复服务</td><td>RTO = 30 分钟 → 从炸到好最多半小时</td></tr>
+</table>
+
+<pre><code>┌────────────────────────────────────────────────┐
+│                  事故时间线                       │
+│                                                │
+│  上次备份 ←─── RPO ──→ 故障点                    │
+│     │                    │                     │
+│     │    ←───── RTO ────→│                     │
+│     │        恢复时长     │                     │
+│     ↓                    ↓                     │
+│  开始恢复              服务恢复                  │
+└────────────────────────────────────────────────┘</code></pre>
+
+<p><strong>PostgreSQL 备份三种方式：</strong></p>
+
+<pre><code># 方式 1：pg_dump（逻辑备份——最简单）
+pg_dump -h localhost -U myuser mydb > backup_$(date +%Y%m%d).sql
+# 恢复：psql -U myuser mydb < backup.sql
+# 缺点：大库慢，恢复时间长（RTO 差）
+
+# 方式 2：pg_dumpall + cron（日常定时备份）
+# crontab -e
+0 3 * * * pg_dump -U myuser mydb | gzip > /backups/db_$(date +\%Y\%m\%d).sql.gz
+# 每天凌晨 3 点备份，gzip 压缩
+
+# 方式 3：WAL 归档 + PITR（最重要！生产环境标准）
+# WAL = Write-Ahead Log，数据库的每一笔操作都先写到 WAL
+# PITR = Point-in-Time Recovery，可以恢复到任意时间点
+# 配置 postgresql.conf：
+wal_level = replica
+archive_mode = on
+archive_command = 'test ! -f /wal_archive/%f && cp %p /wal_archive/%f'
+# 随时恢复到「昨天下午 3 点的状态」</code></pre>
+
+<div class="note">
+<strong>备份三原则（3-2-1 Rule）：</strong>至少 3 份副本，存在 2 种不同介质（本地磁盘 + S3/云端），其中 1 份异地存储（另一个 Region）。而且——<strong>没测过恢复的备份不算备份</strong>。每季度做一次恢复演练。
+</div>
+
+<h2>第三课：连接池——502 Bad Gateway 的背后真凶</h2>
+
+<p>场景：网站突然大量 502。Nginx 日志显示 upstream timeout。Prometheus（0009）显示数据库连接数打满了。发生了什么？</p>
+
+<pre><code># 排查步骤（在 PostgreSQL 上）
+
+# 1. 看当前有多少连接
+psql -c "SELECT count(*) FROM pg_stat_activity;"
+# 输出: 150  ← 如果接近 max_connections（默认 100），问题在这
+
+# 2. 看谁在占着连接不放？
+SELECT pid, state, wait_event_type, query_start, left(query, 80)
+FROM pg_stat_activity
+WHERE state != 'idle'
+ORDER BY query_start;
+# 重点看：
+# - state = 'idle in transaction' → 拿了连接但不做事，最坏的连接泄漏
+# - wait_event_type = 'Lock' → 有人在等锁，整个库可能被卡住
+
+# 3. 如果有 idle in transaction 的老连接——杀掉它
+SELECT pg_terminate_backend(<pid>);
+
+# 4. 根本解决方案：连接池（PgBouncer）
+# 不装连接池：每个应用实例开 20 个连接，3 个实例 = 60
+# 微服务时代 10 个服务 × 10 连接 = 100，直接打满
+# 装 PgBouncer：应用 → PgBouncer（持有少量连接）→ PostgreSQL</code></pre>
+
+<p>PgBouncer 最简配置：</p>
+
+<pre><code># /etc/pgbouncer/pgbouncer.ini
+[databases]
+mydb = host=localhost port=5432 dbname=mydb
+
+[pgbouncer]
+listen_addr = 0.0.0.0
+listen_port = 6432
+auth_type = scram-sha-256
+auth_file = /etc/pgbouncer/userlist.txt
+pool_mode = transaction        # 关键：每个 transaction 用完就还连接
+default_pool_size = 25         # 只维护 25 个实际连接
+max_client_conn = 500          # 但是可以服务 500 个客户端
+
+# 应用连接串从 :5432 改成 :6432
+# DATABASE_URL=postgres://user:pass@localhost:6432/mydb</code></pre>
+
+<p>连接池的关键选择：</p>
+<ul>
+  <li><strong>Session pooling</strong>：一个客户端分配一个连接，连接跟整个 session 生命周期。简单但效率低</li>
+  <li><strong>Transaction pooling</strong>：一个连接只在 transaction 期间分配，transaction 结束立刻还给池。推荐</li>
+  <li><strong>Statement pooling</strong>：最激进——每个 SQL 语句都是一个独立的分配周期。不适合需要事务的场景</li>
+</ul>
+
+<h2>第四课：Redis 运维——面试三连击</h2>
+
+<p>Redis 是 DevOps 的瑞士军刀——缓存、消息队列、分布式锁、限流。但它有三种经典的「挂掉」方式。</p>
+
+<pre><code># 面试经典三问：
+
+# Q1: 缓存穿透是什么？怎么解决？
+# A: 查一个不存在的数据，缓存里没有，数据库里也没有，
+#    每次请求都穿透缓存直击数据库。恶意攻击可以用不存在的 ID 打垮数据库。
+#    解决：
+#    a) 布隆过滤器预先判断 key 是否存在
+#    b) 不存在的 key 也缓存空值（设置短 TTL）
+
+# Q2: 缓存击穿是什么？怎么解决？
+# A: 一个热点 key 过期了，瞬间大量请求打到数据库。
+#    解决：
+#    a) 热点 key 永不过期（逻辑过期，用异步任务刷新值）
+#    b) 互斥锁：第一个请求去查数据库并重建缓存，其他请求等待结果
+
+# Q3: 缓存雪崩是什么？怎么解决？
+# A: 大量 key 在同一个时间点过期，或者 Redis 集群挂了，
+#    所有请求同时命中数据库。
+#    解决：
+#    a) TTL 加随机值（基础 TTL ± rand(0, 600s)）
+#    b) Redis 高可用（哨兵/集群）
+#    c) 限流 + 降级：数据库扛不住就返回降级数据，别硬撑</code></pre>
+
+<p>Redis 日常运维命令：</p>
+
+<pre><code># 连接 Redis
+redis-cli -h localhost -p 6379
+
+# 看整体状况
+INFO stats        # 命中率 keyspace_hits / (hits + misses)
+INFO memory       # 内存使用——接近 maxmemory 就该扩容了
+INFO replication  # 主从复制状态
+INFO persistence  # RDB/AOF 持久化状态
+
+# 慢查询
+SLOWLOG GET 10    # 最近 10 条慢查询
+
+# 监控实时请求（小心：生产环境影响性能）
+MONITOR           # Ctrl+C 退出
+
+# 设置 maxmemory-policy（内存满了怎么淘汰）
+CONFIG SET maxmemory-policy allkeys-lru
+# 策略选择：
+#   noeviction: 不淘汰，满了就拒绝写入（不要用）
+#   allkeys-lru: 淘汰最近最少用的（推荐缓存场景）
+#   volatile-lru: 只淘汰设了 TTL 的 key
+#   allkeys-random: 随机淘汰（一致性要求低的场景）</code></pre>
+
+<h2>动手练习：在本地搭 PostgreSQL + 模拟一次「删库恢复」</h2>
+
+<p><strong>任务：</strong>在本地（或 VPS Docker Compose）启动 PostgreSQL，建表插数据，模拟备份 → 删库 → 恢复全过程。</p>
+
+<pre><code># 1. 用 Docker 启动 PostgreSQL（如果本地没装）
+docker run -d --name pg-demo \
+  -e POSTGRES_PASSWORD=demo123 \
+  -e POSTGRES_DB=myapp \
+  -p 5432:5432 \
+  postgres:16-alpine
+
+# 2. 进入数据库，建表 + 插数据
+docker exec -it pg-demo psql -U postgres -d myapp
+
+CREATE TABLE users (
+  id SERIAL PRIMARY KEY,
+  name TEXT NOT NULL,
+  created_at TIMESTAMPTZ DEFAULT now()
+);
+INSERT INTO users (name) VALUES ('Alice'), ('Bob'), ('Charlie');
+SELECT * FROM users;
+# 记下：3 行数据
+\q
+
+# 3. 备份
+docker exec pg-demo pg_dump -U postgres myapp > backup.sql
+wc -l backup.sql   # 看一眼备份文件有多大
+
+# 4. 模拟「删库跑路」
+docker exec pg-demo psql -U postgres -d myapp -c "DROP TABLE users;"
+
+# 5. 验证——数据没了
+docker exec pg-demo psql -U postgres -d myapp -c "\dt"
+# 输出：No relations found.
+
+# 6. 恢复！
+docker exec -i pg-demo psql -U postgres -d myapp < backup.sql
+
+# 7. 验证恢复成功
+docker exec pg-demo psql -U postgres -d myapp -c "SELECT * FROM users;"
+# 应该看到 Alice / Bob / Charlie
+
+# 8. 清理
+docker rm -f pg-demo
+rm backup.sql</code></pre>
+
+<div class="tip">
+<strong>你的任务：</strong>跑通上面的备份恢复流程后，创建第二个表 <code>orders</code>，插几条数据，再次备份。然后删掉两个表，恢复。确认两个表都回来了。<br>
+<strong>加分题：</strong>用 docker-compose 同时起 PostgreSQL + PgBouncer + 你的应用，测试连接池的效果（写一个脚本疯狂连数据库，看 PgBouncer 如何限制连接数）。
+</div>
+
+<h2>小测验</h2>
+
+<form id="quiz" onsubmit="return checkQuiz(event)">
+  <fieldset style="border:1px solid var(--border); border-radius:6px; padding:1rem; margin:1rem 0;">
+    <legend style="font-weight:600;">Q1：数据库迁移文件为什么必须包含 up 和 down 两个方向？</legend>
+    <label><input type="radio" name="q1" value="a"> 这是迁移工具的强制格式要求</label>
+    <label><input type="radio" name="q1" value="b"> up 是正向迁移，down 是回滚——上线失败时需要安全退回到上一个数据库状态</label>
+    <label><input type="radio" name="q1" value="c"> down 文件是给新同事看的注释</label>
+    <label><input type="radio" name="q1" value="d"> 两个文件跑得更快</label>
+  </fieldset>
+
+  <fieldset style="border:1px solid var(--border); border-radius:6px; padding:1rem; margin:1rem 0;">
+    <legend style="font-weight:600;">Q2：RPO = 1 小时，意味着什么？</legend>
+    <label><input type="radio" name="q2" value="a"> 数据库每小时自动重启一次</label>
+    <label><input type="radio" name="q2" value="b"> 从故障到恢复最多 1 小时</label>
+    <label><input type="radio" name="q2" value="c"> 最多容忍丢失最近 1 小时的数据</label>
+    <label><input type="radio" name="q2" value="d"> 备份文件保留 1 小时</label>
+  </fieldset>
+
+  <fieldset style="border:1px solid var(--border); border-radius:6px; padding:1rem; margin:1rem 0;">
+    <legend style="font-weight:600;">Q3：缓存雪崩的直接原因是什么？</legend>
+    <label><input type="radio" name="q3" value="a"> 单个热点 key 过期，大量请求打向数据库</label>
+    <label><input type="radio" name="q3" value="b"> 查询不存在的数据，每次穿透缓存直接访问数据库</label>
+    <label><input type="radio" name="q3" value="c"> 大量 key 同一时间段内集中过期（或 Redis 挂掉），所有请求瞬间压向数据库</label>
+    <label><input type="radio" name="q3" value="d"> Redis 内存被写满了</label>
+  </fieldset>
+
+  <fieldset style="border:1px solid var(--border); border-radius:6px; padding:1rem; margin:1rem 0;">
+    <legend style="font-weight:600;">Q4：PgBouncer Transaction Pooling 的核心优势是什么？</legend>
+    <label><input type="radio" name="q4" value="a"> 每个客户端独占一个数据库连接，简单可靠</label>
+    <label><input type="radio" name="q4" value="b"> 连接只在 transaction 期间分配，用完立刻释放，少量物理连接服务大量客户端</label>
+    <label><input type="radio" name="q4" value="c"> 每条 SQL 语句都走一个全新连接，最干净</label>
+    <label><input type="radio" name="q4" value="d"> 自动给所有 SQL 加索引，查得更快</label>
+  </fieldset>
+
+  <button type="submit" style="background:var(--accent);color:#fff;border:none;padding:0.6rem 1.5rem;font-size:1rem;border-radius:6px;cursor:pointer;font-family:inherit;">检查答案</button>
+</form>
+
+<div id="quiz-result" style="margin-top:1rem;"></div>
+
+<h2>推荐资源</h2>
+<ul>
+  <li><a href="https://github.com/golang-migrate/migrate" target="_blank">golang-migrate (GitHub)</a> — 数据库迁移工具，支持 10+ 数据库，CI/CD 友好</li>
+  <li><a href="https://www.pgbouncer.org/" target="_blank">PgBouncer 官方文档</a> — PostgreSQL 连接池的事实标准，轻量（~2MB 内存）</li>
+  <li><a href="https://redis.io/docs/management/optimization/memory-optimization/" target="_blank">Redis 内存优化官方指南</a> — maxmemory-policy 选择、内存碎片处理</li>
+  <li><a href="https://www.postgresql.org/docs/current/continuous-archiving.html" target="_blank">PostgreSQL WAL 归档与 PITR</a> — 生产级备份的官方文档</li>
+  <li><a href="https://use-the-index-luke.com/" target="_blank">Use The Index, Luke</a> — 索引优化的经典教程，DevOps 排错必读</li>
+</ul>
+
+<div class="note">
+这课覆盖的知识点——迁移、备份、连接池、Redis 三连——是 DevOps 面试和日常工作里最容易被「数据库相关」问题卡住的地方。不要求你像 DBA 一样懂索引优化和查询计划，但必须能独立完成备份恢复和连接池排错。
+</div>
+
+<div class="cite">
+<a href="./0021-devsecops.html">← Lesson 0021</a> · <a href="../reference/glossary.html">术语表</a> · <a href="../MISSION.md">Mission</a>
+</div>
+
+<script>
+function checkQuiz(e) {
+  e.preventDefault();
+  const answers = { q1: 'b', q2: 'c', q3: 'c', q4: 'b' };
+  let correct = 0, feedback = [];
+  for (const [q, a] of Object.entries(answers)) {
+    const sel = document.querySelector(`input[name="${q}"]:checked`);
+    if (!sel) feedback.push(q + ': 未作答');
+    else if (sel.value === a) { correct++; feedback.push(q + ': \u2713 正确'); }
+    else feedback.push(q + ': \u2717 错误');
+  }
+  const pct = Math.round(correct/4*100);
+  const div = document.getElementById('quiz-result');
+  div.innerHTML = `<div style="background:${pct===100?'var(--success-bg)':'var(--warn-bg)'};color:${pct===100?'var(--success-fg)':'var(--warn-fg)'};padding:0.75rem 1rem;border-radius:6px;">
+    <strong>得分：${correct}/4 (${pct}%)</strong><br>${feedback.join('<br>')}
+    ${pct===100?'<br>\uD83C\uDF89 全对！数据库运维核心概念已掌握。':''}
+  </div>`;
+}
+</script>
+
+</body>
+</html>

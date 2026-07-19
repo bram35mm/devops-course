@@ -1,0 +1,304 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Lesson 0020 — 云平台实操：从 VPS 到云</title>
+<link rel="stylesheet" href="../assets/style.css">
+</head>
+<body>
+
+<h1>Lesson 0020：云平台实操——你不只是在租服务器</h1>
+
+<p>前面 19 节课你学会了 Docker、K8s、Terraform、CI/CD 全套工具链，但有一个盲区：<strong>这些工具操作的对象——云资源本身——你还不熟悉</strong>。这节课补齐这个缺口。</p>
+
+<p>JD 里「熟悉至少一个云平台」的出现率接近 100%。以 AWS 为例（概念在所有云平台通用，阿里云/腾讯云/GCP 只是名字不同），这节课覆盖 DevOps 日常高频接触的核心云服务。</p>
+
+<h2>VPS vs 云平台：不是一回事</h2>
+
+<table>
+  <tr><th>维度</th><th>VPS（你现有的）</th><th>云平台（AWS/阿里云）</th></tr>
+  <tr><td>网络</td><td>一个公网 IP，无隔离</td><td>VPC = 你自己的虚拟私有网络</td></tr>
+  <tr><td>安全</td><td>ufw 防火墙</td><td>安全组（Security Group）= 实例级防火墙</td></tr>
+  <tr><td>存储</td><td>本地磁盘</td><td>EBS（块存储）+ S3（对象存储）+ EFS（文件存储）</td></tr>
+  <tr><td>数据库</td><td>自己装 PostgreSQL</td><td>RDS = 托管数据库，自动备份/多 AZ</td></tr>
+  <tr><td>权限</td><td>root 一把梭</td><td>IAM = 精细到单个 API 的权限控制</td></tr>
+  <tr><td>计费</td><td>固定月费</td><td>按用量计费，忘删资源 = 月底账单爆炸</td></tr>
+</table>
+
+<div class="note">
+本课用 AWS 术语，但你学的是<strong>概念模型</strong>——VPC/安全组/IAM/RDS/S3 是所有云平台的通用概念，换到阿里云只是名字不同（VPC→专有网络，EC2→ECS，S3→OSS）。
+</div>
+
+<h2>五大核心服务——DevOps 日常绕不开的</h2>
+
+<h3>1. VPC（Virtual Private Cloud）——你的私有网络</h3>
+
+<p>VPC 是你云上所有资源的网络容器。一个典型的 Web 应用 VPC 架构：</p>
+
+<pre><code>                        Internet
+                           │
+                      Internet Gateway
+                           │
+           ┌───────────────┴───────────────┐
+           │         VPC (10.0.0.0/16)      │
+           │                                │
+           │   Public Subnet (10.0.1.0/24)  │  ← 有公网 IP 的资源
+           │   ┌──────────┐ ┌───────────┐   │
+           │   │  Bastion  │ │  ALB      │   │
+           │   │  (跳板机) │ │ (负载均衡)│   │
+           │   └──────────┘ └───────────┘   │
+           │                                │
+           │   Private Subnet (10.0.2.0/24) │  ← 无公网 IP，更安全
+           │   ┌──────────┐ ┌───────────┐   │
+           │   │  EC2 App │ │  RDS DB   │   │
+           │   └──────────┘ └───────────┘   │
+           └────────────────────────────────┘</code></pre>
+
+<p>面试必知：</p>
+<ul>
+  <li><strong>Public Subnet</strong>：有路由到 Internet Gateway，资源可以有公网 IP</li>
+  <li><strong>Private Subnet</strong>：没有直接出网路由，数据库放这里最安全。出网需 NAT Gateway</li>
+  <li><strong>Security Group</strong>：作用在实例级别的有状态防火墙——允许 inbound 的响应自动允许 outbound</li>
+  <li><strong>NACL</strong>：作用在子网级别的无状态防火墙——inbound 和 outbound 要分别配</li>
+</ul>
+
+<h3>2. EC2（Elastic Compute Cloud）——虚拟机</h3>
+
+<p>EC2 就是你 VPS 的云版本。但比 VPS 多了几个关键能力：</p>
+
+<pre><code># 启动一台 EC2 的典型参数（Terraform 视角——对应 0008）：
+resource "aws_instance" "app" {
+  ami           = "ami-0c55b159cbfafe1f0"   # 操作系统镜像
+  instance_type = "t3.medium"                # CPU/内存规格
+  subnet_id     = aws_subnet.private.id      # 放在哪个子网
+  vpc_security_group_ids = [aws_security_group.app.id]
+  key_name      = "my-key"                   # SSH 密钥
+
+  root_block_device {
+    volume_size = 20                         # 系统盘大小 GB
+    volume_type = "gp3"                      # SSD 类型
+  }
+}</code></pre>
+
+<table>
+  <tr><th>概念</th><th>含义</th><th>面试问什么</th></tr>
+  <tr><td>AMI</td><td>Amazon Machine Image，OS 快照</td><td>选 Amazon Linux 2 还是 Ubuntu？</td></tr>
+  <tr><td>Instance Type</td><td>CPU/内存/网络规格</td><td>t3 vs m5 vs c5 的区别？</td></tr>
+  <tr><td>Key Pair</td><td>SSH 密钥</td><td>丢失私钥怎么办？（答：只能换 AMI 重建）</td></tr>
+  <tr><td>User Data</td><td>启动时自动执行的脚本</td><td>和 Ansible(0017) 怎么配合？</td></tr>
+  <tr><td>弹性 IP</td><td>静态公网 IP</td><td>为什么不要给每台 EC2 绑弹性 IP？（答：贵且浪费）</td></tr>
+</table>
+
+<h3>3. IAM（Identity and Access Management）——权限的命根子</h3>
+
+<p>传统运维思维：「SSH 进去，sudo su，想干什么干什么」。</p>
+<p>云上思维：<strong>最小权限原则（Least Privilege）</strong>——每个角色只给刚好够用的权限，多一点都不行。</p>
+
+<pre><code># IAM Policy 示例：只允许读取 S3 里的一个 bucket
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Effect": "Allow",
+      "Action": ["s3:GetObject", "s3:ListBucket"],
+      "Resource": [
+        "arn:aws:s3:::my-app-config",
+        "arn:aws:s3:::my-app-config/*"
+      ]
+    }
+  ]
+}</code></pre>
+
+<p>核心概念：</p>
+<ul>
+  <li><strong>User</strong>：人（你有用户名密码/API Key）</li>
+  <li><strong>Role</strong>：角色（EC2 可以用 Role，不需要在代码里写密码——这是你 0006 学的 GitHub Secrets 的云版本）</li>
+  <li><strong>Policy</strong>：权限文档（JSON），定义 Allow/Deny 哪些 Action 在哪些 Resource 上</li>
+</ul>
+
+<div class="tip">
+<strong>黄金规则：</strong>永远不要给 EC2 配 IAM User 的 Access Key。用 IAM Role——Role 临时凭证自动轮转，Key 泄露了也没用。这是面试必考题。
+</div>
+
+<h3>4. S3（Simple Storage Service）——对象存储</h3>
+
+<p>S3 不是文件系统。它是一个 key-value 存储，key 是文件名，value 是文件内容。无限容量，11 个 9 的持久性（99.999999999%）。</p>
+
+<pre><code># S3 典型用法
+# 1. 静态网站托管
+# 2. CI/CD 制品仓库（存构建产物）
+# 3. 日志归档
+# 4. 数据库备份
+# 5. Terraform state 后端（0008 学过 remote state）
+
+# AWS CLI 操作
+aws s3 ls s3://my-bucket/
+aws s3 cp app.zip s3://my-bucket/releases/v1.0.0/app.zip
+aws s3 sync ./dist/ s3://my-site/          # 部署静态站</code></pre>
+
+<table>
+  <tr><th>概念</th><th>含义</th></tr>
+  <tr><td>Bucket</td><td>桶，S3 的顶层容器，名字全局唯一</td></tr>
+  <tr><td>Object</td><td>对象 = 文件 + 元数据。单个最大 5TB</td></tr>
+  <tr><td>Versioning</td><td>版本控制——覆盖文件不丢旧版，误删可恢复</td></tr>
+  <tr><td>Lifecycle Policy</td><td>自动把旧文件归档或删除（30天后转 Glacier，90天后删除）</td></tr>
+  <tr><td>Static Website Hosting</td><td>直接托管 HTML/JS/CSS，不需要 Nginx</td></tr>
+</table>
+
+<h3>5. RDS（Relational Database Service）——托管数据库</h3>
+
+<p>自己装数据库：你要管备份、升级、高可用、磁盘扩容。RDS 把这些全自动化了。</p>
+
+<pre><code># RDS 替你做的事（对比自己装 PostgreSQL）：
+自己装                              RDS
+──────                              ───
+pg_dump + cron 定时备份            自动备份 + 时间点恢复（PITR）
+手动配置主从复制                   Multi-AZ 自动故障切换
+手动监控磁盘使用率                 自动扩容（或告警）
+手动打安全补丁                     自动小版本升级
+手动配置 SSL                       一键强制 SSL</code></pre>
+
+<p>关键参数：</p>
+<ul>
+  <li><strong>Multi-AZ</strong>：主库故障自动切到备库，停机 &lt; 2 分钟。生产数据库必开</li>
+  <li><strong>Read Replica</strong>：只读副本——读写分离，读流量走副本，主库只写</li>
+  <li><strong>Snapshot</strong>：手动快照。删库后能从快照恢复到秒级（PITR）</li>
+</ul>
+
+<h2>动手练习：在 AWS Free Tier 上搭一个最小云环境</h2>
+
+<p><strong>任务：</strong>注册 AWS 账号（需信用卡，free tier 免费），用 AWS CLI 完成以下操作。</p>
+
+<pre><code># 1. 安装 AWS CLI
+# 本机已有的话跳过
+curl "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o awscliv2.zip
+unzip awscliv2.zip && sudo ./aws/install
+aws --version
+
+# 2. 配置凭证（在 AWS Console → IAM → 创建 access key）
+aws configure
+# Access Key ID:     AKIA...
+# Secret Access Key: ...
+# Default region:    us-east-1
+# Output format:     json
+
+# 3. 验证身份
+aws sts get-caller-identity
+# 输出: { "Account": "123456789012", "UserId": "...", "Arn": "..." }
+
+# 4. 创建 S3 bucket（名字必须全局唯一，加随机后缀）
+aws s3 mb s3://my-devops-learning-bucket-$(date +%s)
+# 输出: make_bucket: my-devops-learning-bucket-...
+
+# 5. 上传一个文件
+echo "Hello from AWS CLI" > test.txt
+aws s3 cp test.txt s3://my-devops-learning-bucket-*/
+
+# 6. 验证文件存在
+aws s3 ls s3://my-devops-learning-bucket-*/
+
+# 7. 删除文件 + 删除 bucket（记得清理，避免计费）
+aws s3 rm s3://my-devops-learning-bucket-*/test.txt
+aws s3 rb s3://my-devops-learning-bucket-*/
+
+# 8. 用 Terraform 做同样的事（结合 0008 学的内容）
+cat > s3.tf &lt;&lt; 'EOF'
+provider "aws" { region = "us-east-1" }
+resource "aws_s3_bucket" "demo" {
+  bucket = "my-terraform-bucket-${random_id.suffix.hex}"
+}
+resource "random_id" "suffix" {
+  byte_length = 4
+}
+EOF
+
+terraform init && terraform plan && terraform apply
+terraform destroy   # 毁灭证据，别留账单</code></pre>
+
+<div class="tip">
+<strong>你的任务：</strong>完成上面的 CLI + Terraform 操作后，试着在 free tier 开一台 t2.micro EC2（750 小时/月免费），SSH 进去装 Docker，部署你 0005 课的 Node.js 应用。<br>
+<strong>加分题：</strong>用 Terraform 把 EC2 + Security Group + S3 bucket 一次性建出来，然后 destroy 掉。这就是 IaC(0008) + 云平台(0020) 的实际组合用法。
+</div>
+
+<h2>小测验</h2>
+
+<form id="quiz" onsubmit="return checkQuiz(event)">
+  <fieldset style="border:1px solid var(--border); border-radius:6px; padding:1rem; margin:1rem 0;">
+    <legend style="font-weight:600;">Q1：Public Subnet 和 Private Subnet 的区别是什么？</legend>
+    <label><input type="radio" name="q1" value="a"> Public 有公网 IP，Private 没有</label>
+    <label><input type="radio" name="q1" value="b"> Public 有路由到 Internet Gateway，Private 没有</label>
+    <label><input type="radio" name="q1" value="c"> Public 更快更贵</label>
+    <label><input type="radio" name="q1" value="d"> 两种一样，只是名字不同</label>
+  </fieldset>
+
+  <fieldset style="border:1px solid var(--border); border-radius:6px; padding:1rem; margin:1rem 0;">
+    <legend style="font-weight:600;">Q2：为什么推荐给 EC2 用 IAM Role 而不是 Access Key？</legend>
+    <label><input type="radio" name="q2" value="a"> Access Key 太长了不好配</label>
+    <label><input type="radio" name="q2" value="b"> Role 自动轮转临时凭证，Key 泄露无影响</label>
+    <label><input type="radio" name="q2" value="c"> AWS 已经不支持 Access Key 了</label>
+    <label><input type="radio" name="q2" value="d"> Role 可以跨账号使用</label>
+  </fieldset>
+
+  <fieldset style="border:1px solid var(--border); border-radius:6px; padding:1rem; margin:1rem 0;">
+    <legend style="font-weight:600;">Q3：Security Group 和传统防火墙（ufw/iptables）的核心区别？</legend>
+    <label><input type="radio" name="q3" value="a"> Security Group 只能用 AWS Console 管理</label>
+    <label><input type="radio" name="q3" value="b"> Security Group 是有状态的——允许 in 自动允许对应 out</label>
+    <label><input type="radio" name="q3" value="c"> Security Group 不需要指定端口</label>
+    <label><input type="radio" name="q3" value="d"> 两者完全相同，只是叫法不同</label>
+  </fieldset>
+
+  <fieldset style="border:1px solid var(--border); border-radius:6px; padding:1rem; margin:1rem 0;">
+    <legend style="font-weight:600;">Q4：RDS Multi-AZ 的作用是什么？</legend>
+    <label><input type="radio" name="q4" value="a"> 让数据库跑得更快（读写分离）</label>
+    <label><input type="radio" name="q4" value="b"> 自动故障切换——主库挂了自动切到备库，停机 &lt; 2 分钟</label>
+    <label><input type="radio" name="q4" value="c"> 把数据库分布到多个 Region</label>
+    <label><input type="radio" name="q4" value="d"> 自动扩容磁盘空间</label>
+  </fieldset>
+
+  <button type="submit" style="background:var(--accent);color:#fff;border:none;padding:0.6rem 1.5rem;font-size:1rem;border-radius:6px;cursor:pointer;font-family:inherit;">检查答案</button>
+</form>
+
+<div id="quiz-result" style="margin-top:1rem;"></div>
+
+<h2>推荐资源</h2>
+<ul>
+  <li><a href="https://aws.amazon.com/free/" target="_blank">AWS Free Tier</a> — 12 个月免费套餐，t2.micro EC2 750h/月、S3 5GB、RDS 750h/月</li>
+  <li><a href="https://docs.aws.amazon.com/cli/latest/userguide/" target="_blank">AWS CLI 官方文档</a> — 命令行操作 AWS 的完整参考</li>
+  <li><a href="https://registry.terraform.io/providers/hashicorp/aws/latest/docs" target="_blank">Terraform AWS Provider 文档</a> — 结合 0008 学的内容，用 Terraform 管 AWS 资源</li>
+  <li><a href="https://github.com/open-guides/og-aws" target="_blank">Open Guides — AWS</a> — 开源 AWS 实践指南，比官方文档更实用</li>
+</ul>
+
+<h2>下一步</h2>
+<p>下一课学 <a href="./0021-devsecops.html">Lesson 0021：DevSecOps 安全基础</a>——怎么在 CI/CD 流水线里防止把密钥提交到 Git、怎么扫描容器镜像漏洞、怎么把安全做成自动化。</p>
+
+<div class="note">
+AWS 注册需要信用卡但 free tier 不扣费。如果你不想绑卡，可以只用本课的 AWS CLI demo（前几步不需要信用卡——但创建 bucket/EC2 需要）。阿里云/腾讯云也有免费套餐，概念完全对应；关键是把 VPC/安全组/IAM/S3/RDS 这五个模型印在脑子里。
+</div>
+
+<div class="cite">
+<a href="./0019-gitops-argocd.html">← Lesson 0019</a> · <a href="../reference/glossary.html">术语表</a> · <a href="../MISSION.md">Mission</a>
+</div>
+
+<script>
+function checkQuiz(e) {
+  e.preventDefault();
+  const answers = { q1: 'b', q2: 'b', q3: 'b', q4: 'b' };
+  let correct = 0, feedback = [];
+  for (const [q, a] of Object.entries(answers)) {
+    const sel = document.querySelector(`input[name="${q}"]:checked`);
+    if (!sel) feedback.push(q + ': 未作答');
+    else if (sel.value === a) { correct++; feedback.push(q + ': \u2713 正确'); }
+    else feedback.push(q + ': \u2717 错误');
+  }
+  const pct = Math.round(correct/4*100);
+  const div = document.getElementById('quiz-result');
+  div.innerHTML = `<div style="background:${pct===100?'var(--success-bg)':'var(--warn-bg)'};color:${pct===100?'var(--success-fg)':'var(--warn-fg)'};padding:0.75rem 1rem;border-radius:6px;">
+    <strong>得分：${correct}/4 (${pct}%)</strong><br>${feedback.join('<br>')}
+    ${pct===100?'<br>\uD83C\uDF89 全对！五大核心云服务概念已掌握。':''}
+  </div>`;
+}
+</script>
+
+</body>
+</html>
